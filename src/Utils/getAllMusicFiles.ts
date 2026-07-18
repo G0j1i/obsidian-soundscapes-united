@@ -1,15 +1,21 @@
 import fs from "fs";
 import path from "path";
 
-const MUSIC_FILE_EXTENSIONS = ["mp3", "m4a"];
+const MUSIC_FILE_EXTENSIONS = ["mp3", "m4a", "opus", "ogg", "wav", "flac", "webm"];
 
 const MIME_TYPES: Record<string, string> = {
-	mp3: "audio/mp3",
-	m4a: "audio/mp4",
+  mp3: "audio/mp3",
+  m4a: "audio/mp4",
+  opus: "audio/ogg",  // Opus is technically a subset of Ogg containers in HTML5
+  ogg: "audio/ogg",
+  wav: "audio/wav",
+  flac: "audio/flac",
+  webm: "audio/webm"
 };
 
 export const getMimeType = (extension: string): string => {
-	return MIME_TYPES[extension] || "audio/mp3";
+  // (OLD: `audio/mp3` - It is safer to default to `audio/mpeg` or generic audio if not found
+  return MIME_TYPES[extension] || "audio/mpeg";
 };
 
 /**
@@ -31,7 +37,7 @@ const getAllMusicFiles = (
 		if (fs.statSync(filePath).isDirectory()) {
 			fileArray = getAllMusicFiles(filePath, fileArray);
 		} else if (
-			MUSIC_FILE_EXTENSIONS.includes(path.extname(filePath).slice(1))
+			MUSIC_FILE_EXTENSIONS.includes(path.extname(filePath).slice(1).toLowerCase()) // .toLowerCase() ensures .MP3 works too!
 		) {
 			fileArray?.push(filePath);
 		}

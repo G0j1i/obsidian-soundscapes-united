@@ -78,7 +78,13 @@ export default class SoundscapesPlugin extends Plugin {
 
         this.statusBarItem = this.addStatusBarItem();
         this.statusBarItem.addClass("soundscapesroot");
+        
+        // FIX: Create the UI controls immediately so they are never undefined!
+        this.createControls();
         this.createPlayer();
+        
+        // Trigger initial soundscape state (allows local music to work instantly)
+        this.onSoundscapeChange(this.settings.autoplay);
 
         this.registerView(
             SOUNDSCAPES_REACT_VIEW,
@@ -525,6 +531,9 @@ export default class SoundscapesPlugin extends Plugin {
      * Populates the dropdown on the miniplayer with all available soundscapes
      */
     populateChangeSoundscapeButton() {
+        // FIX: Defensive guard against undefined select element
+        if (!this.changeSoundscapeSelect) return;
+
         this.changeSoundscapeSelect.replaceChildren();
 
         if (this.settings.musicCollections.length > 0) {
@@ -816,7 +825,6 @@ export default class SoundscapesPlugin extends Plugin {
      * Once the player is ready, create the controls and play some music! (or not if autoplay is disabled)
      */
     onPlayerReady() {
-        this.createControls();
         this.onSoundscapeChange(this.settings.autoplay);
     }
 
@@ -908,6 +916,9 @@ export default class SoundscapesPlugin extends Plugin {
      * local file paths from being used in the Audio element.
      */
     onSoundscapeChange(autoplay = true) {
+        // Defensive guard against undefined text layout element
+        if (!this.nowPlaying) return;
+        
         if (this.settings.soundscape.startsWith(`${SOUNDSCAPE_TYPE.CUSTOM}_`)) {
             this.soundscapeType = SOUNDSCAPE_TYPE.CUSTOM;
         } else if (this.isMusicCollectionActive()) {

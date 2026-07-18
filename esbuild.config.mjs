@@ -14,9 +14,9 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === "production";
 const outdir = prod
-	? "./dist/"
-	: // Assumed local path. Update this to the path of your local development vault
-	  "C:/Users/andre/OneDrive/Documents/test develop vault/.obsidian/plugins/obsidian-soundscapes/";
+  ? "./dist/"
+	: "C:/Users/Goji/Documents/Obsidian/Vault/kety/.obsidian/plugins/obsidian-soundscapes-united";
+  // : "./dist"; (Assumed local path. Update this to the path of your local development vault)
 
 const context = await esbuild.context({
 	banner: {
@@ -65,5 +65,5 @@ if (prod) {
 	process.exit(0);
 } else {
 	await context.watch();
-	await context.serve(); // This enables the "live reload"
+	await context.serve(); // This enables the "live reload" / "local development server"
 }

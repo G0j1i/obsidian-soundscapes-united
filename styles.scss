@@ -61,7 +61,8 @@
 		}
 
 		input[type="range"] {
-			-webkit-appearance: slider-vertical;
+			writing-mode: vertical-lr;
+			direction: rtl;
 			width: 6px;
 			height: 60px;
 		}
