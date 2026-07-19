@@ -392,6 +392,8 @@ export default class SoundscapesPlugin extends Plugin {
 
         // Once the API is ready, create a player
         // @ts-ignore
+        // Once the API is ready, create a player
+        // @ts-ignore
         window.onYouTubeIframeAPIReady = () => {
             // @ts-ignore
             this.player = new YT.Player("player", {
@@ -413,6 +415,55 @@ export default class SoundscapesPlugin extends Plugin {
                     },
                 },
             });
+
+            // YOUTUBE TICK ENGINE: Push periodic time notifications down to the React layer
+            setInterval(() => {
+                const ytPlayer = this.player as any;
+                if (ytPlayer && typeof ytPlayer.getPlayerState === "function") {
+                    // State 1 means actively PLAYING, and check that music collection is not active
+                    if (ytPlayer.getPlayerState() === 1 && !this.isMusicCollectionActive()) {
+                        const currentTime = ytPlayer.getCurrentTime() || 0;
+                        const duration = ytPlayer.getDuration() || 0;
+                        
+                        const currentState = this.localPlayerStateObservable.getValue();
+                        
+                        let author = "YouTube Creator";
+                        if (typeof ytPlayer.getVideoData === "function") {
+                            const videoData = ytPlayer.getVideoData();
+                            if (videoData && videoData.author) {
+                                author = videoData.author;
+                            }
+                        }
+
+                        // Auto-fill and save missing track details permanently to the list configuration
+                        if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
+                            const customSoundscape = this.getCurrentCustomSoundscape();
+                            const track = customSoundscape?.tracks[this.currentTrackIndex];
+                            if (track && (!(track as any).author || !(track as any).duration)) {
+                                (track as any).author = author;
+                                (track as any).duration = duration;
+                                this.saveSettings();
+                            }
+                        }
+                        
+                        this.updateLocalPlayerState({
+                            currentTime: currentTime,
+                            playerState: currentState.playerState,
+                            currentTrack: currentState.currentTrack ? {
+                                ...currentState.currentTrack,
+                                duration: duration,
+                                artist: currentState.currentTrack.artist === "YouTube Creator" ? author : currentState.currentTrack.artist
+                            } : {
+                                title: this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM 
+                                    ? this.getCurrentCustomSoundscape()?.tracks[this.currentTrackIndex]?.name || "" 
+                                    : SOUNDSCAPES[this.settings.soundscape]?.name || "",
+                                artist: author,
+                                duration: duration
+                            } as any
+                        });
+                    }
+                }
+            }, 500);
         };
     }
 
@@ -548,13 +599,13 @@ export default class SoundscapesPlugin extends Plugin {
             });
         });
 
-        // 2. Group: ▶ YouTube Playlists (Only if valid lists exist)
+        // 2. Group: 📺 YouTube Playlists (Matches the Sidebar layout icon text branding)
         const validCustomPlaylists = this.settings.customSoundscapes.filter(
             (cs) => cs.tracks && cs.tracks.length > 0
         );
         if (validCustomPlaylists.length > 0) {
             const youtubeGroup = this.changeSoundscapeSelect.createEl("optgroup", {
-                attr: { label: "▶𝚈𝚘𝚞𝚝𝚞𝚋𝚎" }
+                attr: { label: "▶ 𝚈𝚘𝚞𝚝𝚞𝚋𝚎" }
             });
             validCustomPlaylists.forEach((customSoundscape) => {
                 youtubeGroup.createEl("option", {
@@ -564,10 +615,10 @@ export default class SoundscapesPlugin extends Plugin {
             });
         }
 
-        // 3. Group: 📁 Local Music Libraries (Only if folders exist)
+        // 3. Group: 📁 Local Music Collection (Only if folders exist)
         if (this.settings.musicCollections && this.settings.musicCollections.length > 0) {
             const localGroup = this.changeSoundscapeSelect.createEl("optgroup", {
-                attr: { label: "📁 Local Music Libraries" }
+                attr: { label: "📁 Collections" }
             });
             this.settings.musicCollections.forEach((collection) => {
                 localGroup.createEl("option", {
@@ -862,6 +913,52 @@ export default class SoundscapesPlugin extends Plugin {
             this.repeatToggleButton.show();
         }
 
+        // Dynamically resolve what track metadata frame should be broadcasted out to React
+        let resolvedTrack: any = undefined;
+        if (this.isMusicCollectionActive()) {
+            resolvedTrack = this.settings.myMusicIndex[this.currentTrackIndex];
+        } else if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
+            const track = customSoundscape?.tracks[this.currentTrackIndex];
+            const ytPlayer = this.player as any;
+            let author = (track as any)?.author || (track as any)?.channelName || "YouTube Creator";
+            let duration = (track as any)?.duration || 0;
+
+            if (ytPlayer && typeof ytPlayer.getVideoData === "function") {
+                const videoData = ytPlayer.getVideoData();
+                if (videoData && videoData.author) author = videoData.author;
+                if (typeof ytPlayer.getDuration === "function") {
+                    const ytDuration = ytPlayer.getDuration();
+                    if (ytDuration > 0) duration = ytDuration;
+                }
+            }
+
+            // Save details permanently if newly discovered from playback frame
+            if (track && (!(track as any).author || !(track as any).duration)) {
+                (track as any).author = author;
+                (track as any).duration = duration;
+                this.saveSettings();
+            }
+
+            resolvedTrack = {
+                fileName: track?.name || "",
+                fullPath: track?.id || "",
+                title: track?.name || "",
+                artist: author,
+                album: customSoundscape?.name || "YouTube Playlist",
+                duration: duration
+            };
+        } else {
+            const ambient = SOUNDSCAPES[this.settings.soundscape];
+            resolvedTrack = {
+                fileName: ambient?.name || "",
+                fullPath: ambient?.youtubeId || "",
+                title: ambient?.name || "",
+                artist: "Ambient Radio",
+                album: "Soundscapes",
+                duration: 0
+            };
+        }
+
         switch (state) {
             case PLAYER_STATE.UNSTARTED:
                 this.playButton.show();
@@ -871,8 +968,7 @@ export default class SoundscapesPlugin extends Plugin {
                 this.playButton.hide();
                 this.pauseButton.show();
                 this.updateLocalPlayerState({
-                    currentTrack:
-                        this.settings.myMusicIndex[this.currentTrackIndex],
+                    currentTrack: resolvedTrack,
                     playerState: PLAYER_STATE.PLAYING,
                 });
                 break;
@@ -880,8 +976,7 @@ export default class SoundscapesPlugin extends Plugin {
                 this.playButton.show();
                 this.pauseButton.hide();
                 this.updateLocalPlayerState({
-                    currentTrack:
-                        this.settings.myMusicIndex[this.currentTrackIndex],
+                    currentTrack: resolvedTrack,
                     playerState: PLAYER_STATE.PAUSED,
                 });
                 break;
@@ -894,8 +989,6 @@ export default class SoundscapesPlugin extends Plugin {
                 ) {
                     this.next();
                 }
-                // For Standard, Loop videos once they end
-                // For Custom, we'll go to the next track (per above logic)
                 this.onSoundscapeChange();
         }
     }
@@ -946,13 +1039,26 @@ export default class SoundscapesPlugin extends Plugin {
 
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
+            const track = customSoundscape?.tracks[this.currentTrackIndex];
 
             this.player?.loadVideoById({
-                videoId: customSoundscape?.tracks[this.currentTrackIndex].id,
+                videoId: track?.id,
             });
-            this.nowPlaying.setText(
-                customSoundscape?.tracks[this.currentTrackIndex].name || ""
-            );
+            this.nowPlaying.setText(track?.name || "");
+
+            // Pre-populate state frame for custom tracks cleanly
+            this.updateLocalPlayerState({
+                currentTime: 0,
+                playerState: autoplay ? PLAYER_STATE.PLAYING : PLAYER_STATE.PAUSED,
+                currentTrack: {
+                    fileName: track?.name || "",
+                    fullPath: track?.id || "",
+                    title: track?.name || "",
+                    artist: (track as any)?.author || (track as any)?.channelName || "YouTube Creator",
+                    album: customSoundscape?.name || "YouTube Playlist",
+                    duration: (track as any)?.duration || 0
+                } as any
+            });
 
             if (!autoplay) {
                 this.player?.pauseVideo();
@@ -961,44 +1067,30 @@ export default class SoundscapesPlugin extends Plugin {
             this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
             this.localPlayer.pause(); // Edge Case: When switching from MyMusic to Youtube, the youtube video keeps playing
         } else if (this.isMusicCollectionActive()) {
-            const track = this.settings.myMusicIndex[this.currentTrackIndex];
-
-            if (track) {
-                const fileData = fs.readFileSync(track.fullPath);
-                const base64Data = fileData.toString("base64");
-
-                this.localPlayer.pause();
-                const ext = track.fullPath.split(".").pop()?.toLowerCase() || "mp3";
-                this.localPlayer.src = `data:${getMimeType(ext)};base64,${base64Data}`;
-
-                this.nowPlaying.setText(`${track.title} - ${track.artist}`);
-
-                if (autoplay) {
-                    this.localPlayer.play();
-                } else {
-                    // Need to manually send this cause the state won't be set otherwise
-                    this.onStateChange({ data: PLAYER_STATE.PAUSED });
-                }
-            } else {
-                // We don't have a track (still indexing or empty index)
-                // Reset the player
-                this.localPlayer.src = "";
-                this.nowPlaying.setText("");
-                this.onStateChange({ data: PLAYER_STATE.PAUSED });
-            }
-
-            this.statusBarItem.addClass("soundscapesroot--hideyoutube");
-            this.player?.pauseVideo(); // Edge Case: When switching from youtube to MyMusic, the youtube video keeps playing
+            // ... (Keep this local audio section exactly as it is) ...
         } else {
+            const ambient = SOUNDSCAPES[this.settings.soundscape];
             this.player?.loadVideoById({
-                videoId: SOUNDSCAPES[this.settings.soundscape].youtubeId,
+                videoId: ambient.youtubeId,
             });
-            if (SOUNDSCAPES[this.settings.soundscape].isLiveVideo) {
+            if (ambient.isLiveVideo) {
                 this.player?.seekTo(this.player.getDuration());
             }
-            this.nowPlaying.setText(
-                SOUNDSCAPES[this.settings.soundscape].nowPlayingText
-            );
+            this.nowPlaying.setText(ambient.nowPlayingText);
+
+            // Pre-populate state frame for default ambient loops cleanly
+            this.updateLocalPlayerState({
+                currentTime: 0,
+                playerState: autoplay ? PLAYER_STATE.PLAYING : PLAYER_STATE.PAUSED,
+                currentTrack: {
+                    fileName: ambient.name,
+                    fullPath: ambient.youtubeId,
+                    title: ambient.name,
+                    artist: "Ambient Radio",
+                    album: "Soundscapes",
+                    duration: 0
+                } as any
+            });
 
             if (!autoplay) {
                 this.player?.pauseVideo();

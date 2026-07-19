@@ -156,15 +156,18 @@ const App = () => {
 		if (activeView.type === "youtube" && activeView.id) {
 			const targetPlaylist = settings.customSoundscapes?.find(p => p.id === activeView.id);
 			if (!targetPlaylist || !targetPlaylist.tracks) return [];
-			return targetPlaylist.tracks.map((track, idx) => ({
-				id: `${track.id}_${idx}`,
-				title: track.name,
-				artist: "YouTube Stream",
-				album: targetPlaylist.name,
-				duration: 0,
-				source: "youtube",
-				nativeTrackRef: track
-			}));
+			return targetPlaylist.tracks.map((track, idx) => {
+				const ytTrack = track as any; // Safe-cast to read dynamic author & duration parameters
+				return {
+					id: `${track.id}_${idx}`,
+					title: track.name,
+					artist: ytTrack.author || ytTrack.channelName || "YouTube Creator",
+					album: targetPlaylist.name,
+					duration: ytTrack.duration || 0,
+					source: "youtube",
+					nativeTrackRef: track
+				};
+			});
 		}
 
 		if (activeView.type === "local") {
