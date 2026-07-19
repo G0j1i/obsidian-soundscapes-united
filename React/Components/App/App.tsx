@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { useObsidianPluginContext } from "../../Context/ObsidianPluginContext";
 import Icon from "../Icon/Icon";
 import Header from "../Header/Header";
 import secondsToMinutesAndSeconds from "../../Utils/secondsToMinutesAndSeconds";
 import { LocalPlayerState } from "src/Types/Interfaces";
-import { PLAYER_STATE, SOUNDSCAPE_TYPE } from "src/Types/Enums";
+import { PLAYER_STATE } from "src/Types/Enums";
 import { SoundscapesPluginSettings } from "src/Settings/Settings";
 import SOUNDSCAPES from "src/Soundscapes";
 
@@ -31,24 +31,34 @@ const App = () => {
 	const [settings, setSettings] = useState<SoundscapesPluginSettings>(settingsObservable?.getValue());
 	const [localPlayerState, setLocalPlayerState] = useState<LocalPlayerState>(localPlayerStateObservable?.getValue());
 
-	// Fallback layout style configuration if not yet in user settings
-	const layoutStyle = (settings as any).layoutStyle || "split";
+	// Fallback layout style configuration safely
+	const layoutStyle = settings ? (settings as any).layoutStyle || "split" : "split";
 
 	// Navigation panel tracking state
 	const [activeView, setActiveView] = useState<ViewContext>({ type: "home", id: null, label: "Library" });
+	const [ambientExpanded, setAmbientExpanded] = useState<boolean>(false);
+
+	/**
+	 * Safe helper to trigger plugin context switches without repetitive type casting
+	 */
+	const handleSoundscapeChange = useCallback((soundscapeId: string) => {
+		if (plugin && typeof (plugin as any).changeSoundscape === "function") {
+			(plugin as any).changeSoundscape(soundscapeId);
+		}
+	}, [plugin]);
 
 	/**
 	 * Resolves any plugin setting soundscape string to our navigation active view state
 	 */
-	const syncViewFromSoundscapeId = (soundscapeId: string) => {
-		if (!soundscapeId) {
+	const syncViewFromSoundscapeId = useCallback((soundscapeId: string) => {
+		if (!soundscapeId || !settings) {
 			setActiveView({ type: "home", id: null, label: "Library" });
 			return;
 		}
 
 		if (soundscapeId.startsWith("CUSTOM_")) {
 			const targetId = soundscapeId.replace("CUSTOM_", "");
-			const targetPlaylist = settings.customSoundscapes.find(p => p.id === targetId);
+			const targetPlaylist = settings.customSoundscapes?.find(p => p.id === targetId);
 			setActiveView({
 				type: "youtube",
 				id: targetId,
@@ -63,7 +73,6 @@ const App = () => {
 				label: targetCollection ? targetCollection.name : "Local Music"
 			});
 		} else {
-			// Built-in ambient tracking
 			const ambient = SOUNDSCAPES[soundscapeId];
 			if (ambient) {
 				setActiveView({ type: "ambient", id: soundscapeId, label: ambient.name });
@@ -71,7 +80,7 @@ const App = () => {
 				setActiveView({ type: "home", id: null, label: "Library" });
 			}
 		}
-	};
+	}, [settings]);
 
 	// Synchronize settings changes from the main application thread
 	useEffect(() => {
@@ -79,7 +88,7 @@ const App = () => {
 			setSettings(newSettings);
 		});
 		return () => unsubscribe?.();
-	}, [setSettings]);
+	}, [settingsObservable]);
 
 	// Listen to player state updates
 	useEffect(() => {
@@ -87,50 +96,50 @@ const App = () => {
 			setLocalPlayerState(newState);
 		});
 		return () => unsubscribe?.();
-	}, [setLocalPlayerState]);
+	}, [localPlayerStateObservable]);
 
-	// Auto-navigate to whichever playlist is currently running on the status bar when loaded or switched
+	// Auto-navigate to whichever playlist is currently running when loaded or switched
 	useEffect(() => {
 		if (settings?.soundscape) {
 			syncViewFromSoundscapeId(settings.soundscape);
+			
+			const isAmbientActive = !settings.soundscape.startsWith("CUSTOM_") && !settings.soundscape.startsWith("MUSIC_COLLECTION_");
+			if (isAmbientActive) {
+				setAmbientExpanded(true);
+			}
 		}
-	}, [settings?.soundscape]);
+	}, [settings?.soundscape, syncViewFromSoundscapeId]);
 
 	/**
-	 * Compiles list items for the primary navigation panel
+	 * Compiles list items for the primary navigation panel (Memoized for performance)
 	 */
-	const getNavigationItems = () => {
-		const items: Array<{ type: "ambient" | "youtube" | "local"; id: string; name: string; icon: string }> = [];
+	const navigationItems = useMemo(() => {
+		const items: Array<{ type: "youtube" | "local"; id: string; name: string; icon: string }> = [];
+		if (!settings) return items;
 
-		// 1. Append built-in streams
-		Object.values(SOUNDSCAPES).forEach(stream => {
-			items.push({ type: "ambient", id: stream.id, name: stream.name, icon: "radio" });
-		});
-
-		// 2. Append custom user streaming lists
 		if (settings.customSoundscapes && settings.customSoundscapes.length > 0) {
 			settings.customSoundscapes.forEach(list => {
 				items.push({ type: "youtube", id: list.id, name: list.name, icon: "youtube" });
 			});
 		}
 
-		// 3. Append indexed local tracks or directories
 		if (settings.musicCollections && settings.musicCollections.length > 0) {
 			settings.musicCollections.forEach(collection => {
 				items.push({ type: "local", id: collection.id, name: collection.name, icon: "folder" });
 			});
 		} else if (settings.myMusicIndex && settings.myMusicIndex.length > 0) {
-			// Backwards compatibility fallback if flat indexing was previously applied
 			items.push({ type: "local", id: "legacy_root", name: "Local Music Library", icon: "music" });
 		}
 
 		return items;
-	};
+	}, [settings?.customSoundscapes, settings?.musicCollections, settings?.myMusicIndex]);
 
 	/**
-	 * Computes dynamic dataset row arrays based on the currently selected active navigation item
+	 * Computes dynamic dataset row arrays based on the currently selected active view (Memoized)
 	 */
-	const getTracksForView = (): UnifiedTrack[] => {
+	const currentTracks = useMemo((): UnifiedTrack[] => {
+		if (!settings) return [];
+
 		if (activeView.type === "ambient" && activeView.id) {
 			const stream = SOUNDSCAPES[activeView.id];
 			return stream ? [{
@@ -145,8 +154,8 @@ const App = () => {
 		}
 
 		if (activeView.type === "youtube" && activeView.id) {
-			const targetPlaylist = settings.customSoundscapes.find(p => p.id === activeView.id);
-			if (!targetPlaylist) return [];
+			const targetPlaylist = settings.customSoundscapes?.find(p => p.id === activeView.id);
+			if (!targetPlaylist || !targetPlaylist.tracks) return [];
 			return targetPlaylist.tracks.map((track, idx) => ({
 				id: `${track.id}_${idx}`,
 				title: track.name,
@@ -159,8 +168,7 @@ const App = () => {
 		}
 
 		if (activeView.type === "local") {
-			// Gather active scanned files
-			return settings.myMusicIndex.map(song => ({
+			return (settings.myMusicIndex || []).map(song => ({
 				id: song.fullPath,
 				title: song.title || song.fileName,
 				artist: song.artist || "Unknown Artist",
@@ -172,59 +180,83 @@ const App = () => {
 		}
 
 		return [];
-	};
+	}, [activeView, settings?.customSoundscapes, settings?.myMusicIndex]);
 
 	/**
 	 * Triggers the correct back-end player actions depending on the source type
 	 */
-	const handleTrackPlay = (track: UnifiedTrack) => {
+	const handleTrackPlay = useCallback((track: UnifiedTrack) => {
 		if (!plugin) return;
 
 		if (track.source === "local") {
 			plugin.changeMyMusicTrack(track.nativeTrackRef.fileName);
 		} else if (track.source === "youtube" || track.source === "ambient") {
-			const fullPluginSoundscapeId = track.source === "youtube" 
-				? `CUSTOM_${activeView.id}` 
-				: activeView.id;
-			
-			if (fullPluginSoundscapeId) {
-				(plugin as any).changeSoundscape?.(fullPluginSoundscapeId);
-			}
+			const fullPluginSoundscapeId = track.source === "youtube" ? `CUSTOM_${activeView.id}` : activeView.id;
+			if (fullPluginSoundscapeId) handleSoundscapeChange(fullPluginSoundscapeId);
 		}
-	};
-
-	const currentTracks = getTracksForView();
+	}, [plugin, activeView.id, handleSoundscapeChange]);
 
 	// Render definitions for the unified Navigation List component
 	const renderNavigationList = () => (
 		<div className="soundscapes-nav-panel">
 			<div className="soundscapes-nav-header">Library Sources</div>
-			{getNavigationItems().map(item => {
-				const isSelected = activeView.type === item.type && activeView.id === item.id;
-				return (
-					<div
-						key={`${item.type}_${item.id}`}
-						className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
-						onClick={() => {
-							const targetSoundscapeId = item.type === "youtube" 
-								? `CUSTOM_${item.id}` 
-								: item.type === "local" 
-									? `MUSIC_COLLECTION_${item.id}` 
-									: item.id;
-							(plugin as any).changeSoundscape?.(targetSoundscapeId);
-						}}
-					>
-						<span className="soundscapes-nav-icon">
-							{item.icon === "youtube" ? "📺" : item.icon === "folder" ? "📁" : item.icon === "radio" ? "📻" : "🎵"}
-						</span>
-						<span className="soundscapes-nav-text">{item.name}</span>
+			
+			<div className="soundscapes-nav-group">
+				<div 
+						className="soundscapes-nav-group-header"
+						onClick={() => setAmbientExpanded(!ambientExpanded)}
+						style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "6px 10px", color: "var(--text-muted)" }}
+				>
+						<span style={{ fontSize: "0.75rem", width: "12px", textAlign: "center" }}>{ambientExpanded ? "▼" : "▶"}</span>
+						<Icon name="radio" /> {/* Clean stream antenna/radio icon */}
+						<span className="soundscapes-nav-text" style={{ fontWeight: 500 }}>Ambient Streams</span>
+				</div>
+
+				{ambientExpanded && (
+					<div className="soundscapes-nav-group-items" style={{ marginLeft: "14px", display: "flex", flexDirection: "column", gap: "2px" }}>
+						{Object.values(SOUNDSCAPES).map((stream: any) => {
+							const isSelected = activeView.type === "ambient" && activeView.id === stream.id;
+							return (
+								<div
+									key={stream.id}
+									className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
+									onClick={() => handleSoundscapeChange(stream.id)}
+								>
+									<span className="soundscapes-nav-icon">🎵</span>
+									<span className="soundscapes-nav-text">{stream.name}</span>
+								</div>
+							);
+						})}
 					</div>
-				);
-			})}
+				)}
+			</div>
+
+				{navigationItems.map(item => {
+						const isSelected = activeView.type === item.type && activeView.id === item.id;
+						const targetSoundscapeId = item.type === "youtube" ? `CUSTOM_${item.id}` : item.type === "local" ? `MUSIC_COLLECTION_${item.id}` : item.id;
+						
+						return (
+								<div
+										key={`${item.type}_${item.id}`}
+										className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
+										onClick={() => handleSoundscapeChange(targetSoundscapeId)}
+								>
+										{/* Swapped out emojis for unified Lucide vector icons */}
+										{item.icon === "youtube" ? (
+												<Icon name="youtube" />
+										) : item.icon === "folder" ? (
+												<Icon name="folder" />
+										) : (
+												<Icon name="music" />
+										)}
+										<span className="soundscapes-nav-text">{item.name}</span>
+								</div>
+						);
+				})}
 		</div>
 	);
 
-// Render definitions for the dynamic Song track list table
+	// Render definitions for the dynamic Song track list table
 	const renderTrackTable = () => (
 		<div className="soundscapesmymusic-musiclist">
 			{activeView.type !== "home" && layoutStyle === "drilldown" && (
@@ -247,19 +279,15 @@ const App = () => {
 				</thead>
 				<tbody>
 					{currentTracks.map((track) => {
-						const isCurrentLocal = localPlayerState.currentTrack?.fileName === track.nativeTrackRef?.fileName && track.source === "local";
-						const isCurrentStreaming = settings.soundscape === activeView.id || (track.source === "youtube" && settings.soundscape === `CUSTOM_${activeView.id}`);
+						const isCurrentLocal = localPlayerState?.currentTrack?.fileName === track.nativeTrackRef?.fileName && track.source === "local";
+						const isCurrentStreaming = settings?.soundscape === activeView.id || (track.source === "youtube" && settings?.soundscape === `CUSTOM_${activeView.id}`);
 						const isThisRowPlaying = isCurrentLocal || isCurrentStreaming;
 
 						return (
 							<tr key={track.id} onDoubleClick={() => handleTrackPlay(track)}>
 								<td>
-									{isThisRowPlaying && localPlayerState.playerState === PLAYER_STATE.PLAYING && (
-										<Icon name="volume-2" />
-									)}
-									{isThisRowPlaying && localPlayerState.playerState === PLAYER_STATE.PAUSED && (
-										<Icon name="volume" />
-									)}
+									{isThisRowPlaying && localPlayerState?.playerState === PLAYER_STATE.PLAYING && <Icon name="volume-2" />}
+									{isThisRowPlaying && localPlayerState?.playerState === PLAYER_STATE.PAUSED && <Icon name="volume" />}
 								</td>
 								<td>{track.title}</td>
 								<td>{track.artist}</td>
@@ -279,6 +307,9 @@ const App = () => {
 			</table>
 		</div>
 	);
+
+	// Prevent rendering crashes if settings haven't loaded yet
+	if (!settings) return null;
 
 	return (
 		<div className="soundscapes-holistic-container">

@@ -236,3 +236,60 @@
     visibility: visible !important;
     opacity: 1 !important;
 }
+
+/* Layout for collapsible navigation menus */
+.soundscapes-nav-group {
+    margin-bottom: 8px;
+
+    .soundscapes-nav-group-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        font-weight: 500;
+        cursor: pointer;
+        border-radius: 4px;
+        color: var(--text-muted);
+
+        &:hover {
+            background-color: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+
+        span {
+            font-size: 0.9rem;
+        }
+    }
+
+    .soundscapes-nav-group-items {
+        margin-left: 20px;
+        border-left: 1px solid var(--background-modifier-border);
+        padding-left: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-top: 2px;
+    }
+}
+
+.soundscapes-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+
+    &:hover {
+        background-color: var(--background-modifier-hover);
+        color: var(--text-normal);
+    }
+
+    &.is-active {
+        background-color: var(--background-modifier-active-nav);
+        color: var(--text-accent);
+        font-weight: 600;
+    }
+}
