@@ -11,7 +11,7 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import MusicMetadata from "music-metadata";
 import Observable from "src/Utils/Observable";
-import { ReactView, SOUNDSCAPES_REACT_VIEW } from "./Views/ReactView";
+import { ReactView, SOUNDSCAPES_REACT_VIEW } from "./React/Views/ReactView";
 import getAllMusicFiles, { getMimeType } from "src/Utils/getAllMusicFiles";
 import { LocalPlayerState, Player } from "src/Types/Interfaces";
 import { PLAYER_STATE, SOUNDSCAPE_TYPE } from "src/Types/Enums";
@@ -529,38 +529,55 @@ export default class SoundscapesPlugin extends Plugin {
 
     /**
      * Populates the dropdown on the miniplayer with all available soundscapes
+     * Organized cleanly using nested option groups (optgroups)
      */
     populateChangeSoundscapeButton() {
-        // FIX: Defensive guard against undefined select element
+        // Defensive guard against undefined select element
         if (!this.changeSoundscapeSelect) return;
 
         this.changeSoundscapeSelect.replaceChildren();
 
-        if (this.settings.musicCollections.length > 0) {
+        // 1. Group: 📻 Ambient Streams (Always Visible)
+        const ambientGroup = this.changeSoundscapeSelect.createEl("optgroup", {
+            attr: { label: "📻 Ambient Streams" }
+        });
+        Object.values(SOUNDSCAPES).forEach((soundscape) => {
+            ambientGroup.createEl("option", {
+                text: soundscape.name,
+                value: soundscape.id,
+            });
+        });
+
+        // 2. Group: ▶ YouTube Playlists (Only if valid lists exist)
+        const validCustomPlaylists = this.settings.customSoundscapes.filter(
+            (cs) => cs.tracks && cs.tracks.length > 0
+        );
+        if (validCustomPlaylists.length > 0) {
+            const youtubeGroup = this.changeSoundscapeSelect.createEl("optgroup", {
+                attr: { label: "▶𝚈𝚘𝚞𝚝𝚞𝚋𝚎" }
+            });
+            validCustomPlaylists.forEach((customSoundscape) => {
+                youtubeGroup.createEl("option", {
+                    text: customSoundscape.name,
+                    value: `${SOUNDSCAPE_TYPE.CUSTOM}_${customSoundscape.id}`,
+                });
+            });
+        }
+
+        // 3. Group: 📁 Local Music Libraries (Only if folders exist)
+        if (this.settings.musicCollections && this.settings.musicCollections.length > 0) {
+            const localGroup = this.changeSoundscapeSelect.createEl("optgroup", {
+                attr: { label: "📁 Local Music Libraries" }
+            });
             this.settings.musicCollections.forEach((collection) => {
-                this.changeSoundscapeSelect.createEl("option", {
+                localGroup.createEl("option", {
                     text: collection.name,
                     value: `MUSIC_COLLECTION_${collection.id}`,
                 });
             });
-        } else {
-            Object.values(SOUNDSCAPES).forEach((soundscape) => {
-                this.changeSoundscapeSelect.createEl("option", {
-                    text: soundscape.name,
-                    value: soundscape.id,
-                });
-            });
-
-            this.settings.customSoundscapes.forEach((customSoundscape) => {
-                if (customSoundscape.tracks.length > 0) {
-                    this.changeSoundscapeSelect.createEl("option", {
-                        text: customSoundscape.name,
-                        value: `${SOUNDSCAPE_TYPE.CUSTOM}_${customSoundscape.id}`,
-                    });
-                }
-            });
         }
 
+        // Bind the current active selection back to the selector value
         this.changeSoundscapeSelect.value = this.settings.soundscape;
     }
 

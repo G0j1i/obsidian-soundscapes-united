@@ -1,10 +1,10 @@
 import React from "react";
 import { App, FileView, ItemView, WorkspaceLeaf } from "obsidian";
 import { Root, createRoot } from "react-dom/client";
-import ReactApp from "../React/Components/App/App";
-import { obsidianPluginContext } from "../React/Context/ObsidianPluginContext";
-import Observable from "../src/Utils/Observable";
-import SoundscapesPlugin from "../main";
+import ReactApp from "../Components/App/App";
+import { obsidianPluginContext } from "../Context/ObsidianPluginContext";
+import Observable from "../../src/Utils/Observable";
+import SoundscapesPlugin from "../../main";
 
 export const SOUNDSCAPES_REACT_VIEW = "soundscapes-react-view";
 

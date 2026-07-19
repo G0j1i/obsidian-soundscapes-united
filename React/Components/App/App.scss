@@ -77,3 +77,162 @@
 		}
 	}
 }
+
+/* Holistic Navigation Layout Styles */
+.soundscapes-holistic-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background-color: var(--background-primary);
+}
+
+.soundscapes-split-workspace {
+    display: flex;
+    flex: 1;
+    height: 100%;
+    overflow: hidden;
+}
+
+.soundscapes-sidebar-aside {
+    background-color: var(--background-secondary);
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.soundscapes-nav-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.soundscapes-nav-header {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    font-weight: 700;
+}
+
+.soundscapes-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    transition: background-color 0.15s ease, color 0.15s ease;
+
+    &:hover {
+        background-color: var(--background-modifier-hover);
+        color: var(--text-normal);
+    }
+
+    &.is-active {
+        background-color: var(--background-modifier-active-nav);
+        color: var(--text-accent);
+        font-weight: 600;
+    }
+}
+
+.soundscapes-nav-icon {
+    font-size: 1.1rem;
+}
+
+.soundscapes-main-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 8px;
+}
+
+/* Drilldown Back Controller */
+.soundscapes-back-btn {
+    margin: 10px;
+    background-color: var(--interactive-normal);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    
+    &:hover {
+        background-color: var(--interactive-hover);
+    }
+}
+
+/* Fix header stacking layer context & float search results dropdown */
+.soundscapesmymusic-header {
+    position: relative !important;
+    z-index: 500 !important; /* Forces the header layer to stand ABOVE the music list's z-index: 400 */
+    background-color: var(--background-primary); 
+    overflow: visible !important; /* Allows the absolute dropdown child to break out */
+}
+
+.soundscapesmymusic-right,
+.soundscapesmymusic-right-search {
+    position: relative !important;
+    overflow: visible !important;
+}
+
+.soundscapesmymusic-right-search-results {
+    position: absolute !important;
+    top: 100% !important; /* Drops right below the search bar input */
+    right: 0 !important;
+    width: 320px !important;
+    max-height: 250px !important;
+    overflow-y: auto !important;
+    background-color: var(--background-secondary-alt) !important;
+    border: 1px solid var(--background-modifier-border) !important;
+    border-radius: 4px !important;
+    box-shadow: var(--shadow-s) !important;
+    z-index: 9999 !important; /* Always stays on the highest visible layer */
+}
+
+/* Ensure all input types inside the player are fully interactable */
+.soundscapesmymusic-volume input[type="range"],
+.soundscapesmymusic-middle-seekbar,
+.soundscapesmymusic-right-search-input,
+.soundscapesmymusic-middle-line1-button {
+    position: relative !important;
+    z-index: 30 !important;
+    pointer-events: auto !important;
+    cursor: pointer;
+}
+
+/* Force the header container to stand visually ABOVE the table grid layer */
+.soundscapesmymusic .soundscapesmymusic-header {
+    position: relative !important;
+    z-index: 500 !important; /* Elevated past the table's 400 layer */
+    overflow: visible !important; /* Allows the absolute dropdown child to display outside its bounds */
+}
+
+/* Ensure parent search wrappers propagate layout visibility down */
+.soundscapesmymusic .soundscapesmymusic-right,
+.soundscapesmymusic .soundscapesmymusic-right-search {
+    position: relative !important;
+    overflow: visible !important;
+}
+
+/* Guarantee the search dropdown box stays fully visible on the absolute top layer */
+.soundscapesmymusic .soundscapesmymusic-right-search-results {
+    position: absolute !important;
+    top: 100% !important; /* Anchors the drop window directly under the input field */
+    right: 0 !important;
+    width: 320px !important;
+    max-height: 280px !important;
+    overflow-y: auto !important; /* Adds smooth internal scrolling for long lists */
+    z-index: 9999 !important; /* Highest priority rendering index */
+    background-color: var(--background-secondary-alt) !important;
+    border: 1px solid var(--background-modifier-border) !important;
+    border-radius: 4px !important;
+    box-shadow: var(--shadow-s) !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
