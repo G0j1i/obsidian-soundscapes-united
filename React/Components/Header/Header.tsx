@@ -14,9 +14,10 @@ const Header = () => {
 	);
 	const [settings, setSettings] = useState(plugin?.settingsObservable?.getValue() || plugin?.settings);
 	const titleElementRef = useRef<HTMLDivElement>(null);
+	const placeholderRef = useRef<HTMLDivElement>(null);
 	const shouldScrollTitle = titleElementRef?.current
 		? titleElementRef?.current?.scrollWidth >
-		  titleElementRef?.current?.clientWidth
+			titleElementRef?.current?.clientWidth
 		: false;
 
 	/**
@@ -77,6 +78,73 @@ const Header = () => {
 		}
 	}
 
+	useEffect(() => {
+	const ytPlayerElement = document.getElementById("player");
+	const placeholder = placeholderRef.current;
+
+	if (!ytPlayerElement) return;
+
+	// If no placeholder target is mounted or local audio is running, return control back to status bar
+	if (!placeholder || isLocalActive) {
+		ytPlayerElement.style.removeProperty("position");
+		ytPlayerElement.style.removeProperty("display");
+		ytPlayerElement.style.removeProperty("left");
+		ytPlayerElement.style.removeProperty("top");
+		ytPlayerElement.style.removeProperty("width");
+		ytPlayerElement.style.removeProperty("height");
+		ytPlayerElement.style.removeProperty("border-radius");
+		ytPlayerElement.style.removeProperty("z-index");
+		return;
+	}
+
+	const updatePosition = () => {
+		if (!placeholder || !ytPlayerElement) return;
+		
+		// Get placeholder coordinates relative to the viewport
+		const rect = placeholder.getBoundingClientRect();
+		
+		// If placeholder is collapsed or hidden out of view, don't hijack the player
+		if (rect.width === 0 || rect.height === 0 || rect.top === 0) {
+			return;
+		}
+
+		ytPlayerElement.style.setProperty("position", "fixed", "important");
+		ytPlayerElement.style.setProperty("display", "block", "important");
+		ytPlayerElement.style.setProperty("left", `${rect.left}px`, "important");
+		ytPlayerElement.style.setProperty("top", `${rect.top}px`, "important");
+		ytPlayerElement.style.setProperty("width", `${rect.width}px`, "important");
+		ytPlayerElement.style.setProperty("height", `${rect.height}px`, "important");
+		ytPlayerElement.style.setProperty("border-radius", "6px", "important");
+		ytPlayerElement.style.setProperty("z-index", "1000", "important");
+	};
+
+	const resizeObserver = new ResizeObserver(() => updatePosition());
+	resizeObserver.observe(placeholder);
+	window.addEventListener("resize", updatePosition);
+	
+	// Track scroll events across workspace containers to avoid lagging behind when view shifts
+	const scrollContainers = document.querySelectorAll(".view-content, .workspace-leaf-content");
+	scrollContainers.forEach(container => container.addEventListener("scroll", updatePosition));
+
+	updatePosition();
+
+	return () => {
+		resizeObserver.disconnect();
+		window.removeEventListener("resize", updatePosition);
+		scrollContainers.forEach(container => container.removeEventListener("scroll", updatePosition));
+		
+		// Fully restore natural status bar styling on unmount
+		ytPlayerElement.style.removeProperty("position");
+		ytPlayerElement.style.removeProperty("display");
+		ytPlayerElement.style.removeProperty("left");
+		ytPlayerElement.style.removeProperty("top");
+		ytPlayerElement.style.removeProperty("width");
+		ytPlayerElement.style.removeProperty("height");
+		ytPlayerElement.style.removeProperty("border-radius");
+		ytPlayerElement.style.removeProperty("z-index");
+	};
+}, [isLocalActive, settings?.soundscape, localPlayerState?.currentTrack]);
+
 	const hasTrackInfo = !!activeTitle;
 	const isLiveStream = !isLocalActive && (!durationSeconds || durationSeconds === 0);
 
@@ -126,6 +194,21 @@ const Header = () => {
 			<div className="soundscapesmymusic-middle">
 				{hasTrackInfo && (
 					<>
+					{/* The Safe Placement Target for YouTube Streams */}
+            {!isLocalActive && (
+                <div 
+                    ref={placeholderRef}
+                    className="soundscapesmymusic-middle-preview-box"
+                    style={{
+                        width: "100%",
+                        height: "140px",
+                        borderRadius: "6px",
+                        backgroundColor: "var(--background-secondary)",
+                        marginBottom: "12px",
+                        border: "1px solid var(--background-modifier-border)"
+                    }}
+                />
+            )}
 						<div className="soundscapesmymusic-middle-line1">
 							<div className="soundscapesmymusic-middle-line1-left">
 								<button
@@ -187,7 +270,9 @@ const Header = () => {
 				)}
 			</div>
 			<div className="soundscapesmymusic-right">
-				<Search />
+				<div className="soundscapes-search-container">
+					<Search />
+				</div>
 			</div>
 		</div>
 	);

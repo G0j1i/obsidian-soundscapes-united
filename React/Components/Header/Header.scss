@@ -2,19 +2,38 @@
 	.soundscapesmymusic-header {
 		background-color: var(--background-primary);
 		display: flex;
-		align-items: center;
-		padding: 0 42px;
-		height: 60px;
+		align-items: stretch; // Allows inner components to scale beautifully
+		padding: 10px 42px; // Adjusted for better breathing room when expanded
+		min-height: 60px;
+    height: auto; // Let the layout expand natively for the video player
 		position: absolute;
 		top: 0;
 		left: 0;
 		right: 0;
 		gap: 1%;
+		// CRITICAL FIX: Allow mouse clicks to pass through the header container space
+		pointer-events: none;
 
 		.soundscapesmymusic-left {
 			flex: 1;
 			display: flex;
 			align-items: center;
+			// Re-enable clicks for the buttons inside this block
+			pointer-events: auto;
+
+			// CRITICAL FIX: Retain dropdown anchoring inside search boundaries (Bug 4)
+			.soundscapes-search-container {
+				position: relative; 
+				display: inline-block;
+
+				.soundscapes-search-dropdown {
+					position: absolute;
+					top: 100%; // Anchors precisely at the bottom of the input container box
+					left: 0;
+					margin-top: 4px;
+					z-index: 2000;
+				}
+			}
 
 			.soundscapesmymusic-left-controls {
 				display: flex;
@@ -46,20 +65,26 @@
 		.soundscapesmymusic-volume {
 			flex: 1;
 			align-items: left;
+			display: flex;
+			align-items: center;
+			// Re-enable clicks for the volume control slider bar
+			pointer-events: auto;
 		}
 
 		.soundscapesmymusic-middle {
 			flex: 3;
-			height: 100%;
 			border-left: 1px solid var(--background-modifier-border);
 			border-right: 1px solid var(--background-modifier-border);
 			background-color: var(--background-primary-alt);
 			display: flex;
 			flex-direction: column;
-			height: 100%;
-			justify-content: space-between;
-			overflow: hidden;
+			// height: 100%; <-- REMOVED so it doesn't crush the 140px video box!
+			justify-content: flex-start; // Stack track details neatly below video
+			overflow: visible;           // CRITICAL: Let the video display without getting clipped
 			min-width: 250px;
+			padding: 8px;
+			// Re-enable clicks for progress tracks, skip buttons, and the interactive elements inside the middle player section
+			pointer-events: auto;
 
 			.soundscapesmymusic-middle-line1 {
 				display: flex;

@@ -10,7 +10,9 @@
 	.soundscapesmymusic-musiclist {
 		overflow: scroll;
 		position: absolute;
-		top: 60px;
+		top: 60px; /* Fallback baseline */
+        // Dynamic fit adjustment: tracks layout naturally under header changes
+	    height: calc(100% - var(--header-height, 60px));
 		left: 0;
 		right: 0;
 		bottom: 0;

@@ -1039,26 +1039,13 @@ export default class SoundscapesPlugin extends Plugin {
 
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
-            const track = customSoundscape?.tracks[this.currentTrackIndex];
 
             this.player?.loadVideoById({
-                videoId: track?.id,
+                videoId: customSoundscape?.tracks[this.currentTrackIndex].id,
             });
-            this.nowPlaying.setText(track?.name || "");
-
-            // Pre-populate state frame for custom tracks cleanly
-            this.updateLocalPlayerState({
-                currentTime: 0,
-                playerState: autoplay ? PLAYER_STATE.PLAYING : PLAYER_STATE.PAUSED,
-                currentTrack: {
-                    fileName: track?.name || "",
-                    fullPath: track?.id || "",
-                    title: track?.name || "",
-                    artist: (track as any)?.author || (track as any)?.channelName || "YouTube Creator",
-                    album: customSoundscape?.name || "YouTube Playlist",
-                    duration: (track as any)?.duration || 0
-                } as any
-            });
+            this.nowPlaying.setText(
+                customSoundscape?.tracks[this.currentTrackIndex].name || ""
+            );
 
             if (!autoplay) {
                 this.player?.pauseVideo();
@@ -1067,30 +1054,44 @@ export default class SoundscapesPlugin extends Plugin {
             this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
             this.localPlayer.pause(); // Edge Case: When switching from MyMusic to Youtube, the youtube video keeps playing
         } else if (this.isMusicCollectionActive()) {
-            // ... (Keep this local audio section exactly as it is) ...
+            const track = this.settings.myMusicIndex[this.currentTrackIndex];
+
+            if (track) {
+                const fileData = fs.readFileSync(track.fullPath);
+                const base64Data = fileData.toString("base64");
+
+                this.localPlayer.pause();
+                const ext = track.fullPath.split(".").pop()?.toLowerCase() || "mp3";
+                this.localPlayer.src = `data:${getMimeType(ext)};base64,${base64Data}`;
+
+                this.nowPlaying.setText(`${track.title} - ${track.artist}`);
+
+                if (autoplay) {
+                    this.localPlayer.play();
+                } else {
+                    // Need to manually send this cause the state won't be set otherwise
+                    this.onStateChange({ data: PLAYER_STATE.PAUSED });
+                }
+            } else {
+                // We don't have a track (still indexing or empty index)
+                // Reset the player
+                this.localPlayer.src = "";
+                this.nowPlaying.setText("");
+                this.onStateChange({ data: PLAYER_STATE.PAUSED });
+            }
+
+            this.statusBarItem.addClass("soundscapesroot--hideyoutube");
+            this.player?.pauseVideo(); // Edge Case: When switching from youtube to MyMusic, the youtube video keeps playing
         } else {
-            const ambient = SOUNDSCAPES[this.settings.soundscape];
             this.player?.loadVideoById({
-                videoId: ambient.youtubeId,
+                videoId: SOUNDSCAPES[this.settings.soundscape].youtubeId,
             });
-            if (ambient.isLiveVideo) {
+            if (SOUNDSCAPES[this.settings.soundscape].isLiveVideo) {
                 this.player?.seekTo(this.player.getDuration());
             }
-            this.nowPlaying.setText(ambient.nowPlayingText);
-
-            // Pre-populate state frame for default ambient loops cleanly
-            this.updateLocalPlayerState({
-                currentTime: 0,
-                playerState: autoplay ? PLAYER_STATE.PLAYING : PLAYER_STATE.PAUSED,
-                currentTrack: {
-                    fileName: ambient.name,
-                    fullPath: ambient.youtubeId,
-                    title: ambient.name,
-                    artist: "Ambient Radio",
-                    album: "Soundscapes",
-                    duration: 0
-                } as any
-            });
+            this.nowPlaying.setText(
+                SOUNDSCAPES[this.settings.soundscape].nowPlayingText
+            );
 
             if (!autoplay) {
                 this.player?.pauseVideo();

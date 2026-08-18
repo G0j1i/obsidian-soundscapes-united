@@ -37,6 +37,8 @@ const App = () => {
 	// Navigation panel tracking state
 	const [activeView, setActiveView] = useState<ViewContext>({ type: "home", id: null, label: "Library" });
 	const [ambientExpanded, setAmbientExpanded] = useState<boolean>(false);
+	const [youtubeExpanded, setYoutubeExpanded] = useState<boolean>(true);
+	const [localExpanded, setLocalExpanded] = useState<boolean>(true);
 
 	/**
 	 * Safe helper to trigger plugin context switches without repetitive type casting
@@ -140,17 +142,30 @@ const App = () => {
 	const currentTracks = useMemo((): UnifiedTrack[] => {
 		if (!settings) return [];
 
-		if (activeView.type === "ambient" && activeView.id) {
-			const stream = SOUNDSCAPES[activeView.id];
-			return stream ? [{
-				id: stream.id,
-				title: stream.name,
-				artist: "Ambient Stream",
-				album: "Soundscapes",
-				duration: 0,
-				source: "ambient",
-				nativeTrackRef: stream
-			}] : [];
+		if (activeView.type === "ambient") {
+			// If a specific stream ID is chosen, display it. Otherwise, display ALL streams together (Bug 2)
+			if (activeView.id) {
+				const stream = SOUNDSCAPES[activeView.id];
+				return stream ? [{
+					id: stream.id,
+					title: stream.name,
+					artist: "Ambient Stream",
+					album: "Soundscapes",
+					duration: 0,
+					source: "ambient",
+					nativeTrackRef: stream
+				}] : [];
+			} else {
+				return Object.values(SOUNDSCAPES).map((stream: any) => ({
+					id: stream.id,
+					title: stream.name,
+					artist: "Ambient Stream",
+					album: "Soundscapes",
+					duration: 0,
+					source: "ambient",
+					nativeTrackRef: stream
+				}));
+			}
 		}
 
 		if (activeView.type === "youtube" && activeView.id) {
@@ -192,72 +207,139 @@ const App = () => {
 		if (!plugin) return;
 
 		if (track.source === "local") {
-			plugin.changeMyMusicTrack(track.nativeTrackRef.fileName);
+			// Since nativeTrackRef is the track string/path payload from your music index, pass it directly!
+			plugin.changeMyMusicTrack(track.nativeTrackRef);
 		} else if (track.source === "youtube" || track.source === "ambient") {
-			const fullPluginSoundscapeId = track.source === "youtube" ? `CUSTOM_${activeView.id}` : activeView.id;
-			if (fullPluginSoundscapeId) handleSoundscapeChange(fullPluginSoundscapeId);
+			// Pass the track ID directly to trigger the specific video/stream playback
+			plugin.changeMyMusicTrack(track.id);
 		}
-	}, [plugin, activeView.id, handleSoundscapeChange]);
+	}, [plugin]);
 
 	// Render definitions for the unified Navigation List component
-	const renderNavigationList = () => (
-		<div className="soundscapes-nav-panel">
-			<div className="soundscapes-nav-header">Library Sources</div>
-			
-			<div className="soundscapes-nav-group">
-				<div 
+	const renderNavigationList = () => {
+		const youtubeItems = settings?.customSoundscapes || [];
+		const localCollections = settings?.musicCollections || [];
+
+		return (
+			<div className="soundscapes-nav-panel">
+				<div className="soundscapes-nav-header">Library Sources</div>
+				
+				{/* Group 1: Ambient Streams */}
+				<div className="soundscapes-nav-group">
+					<div 
 						className="soundscapes-nav-group-header"
-						onClick={() => setAmbientExpanded(!ambientExpanded)}
+						onClick={() => {
+							setAmbientExpanded(!ambientExpanded);
+							setActiveView({ type: "ambient", id: null, label: "Ambient Streams" });
+						}}
 						style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "6px 10px", color: "var(--text-muted)" }}
-				>
+					>
 						<span style={{ fontSize: "0.75rem", width: "12px", textAlign: "center" }}>{ambientExpanded ? "▼" : "▶"}</span>
-						<Icon name="radio" /> {/* Clean stream antenna/radio icon */}
+						<Icon name="radio" />
 						<span className="soundscapes-nav-text" style={{ fontWeight: 500 }}>Ambient Streams</span>
+					</div>
+
+					{ambientExpanded && (
+						<div className="soundscapes-nav-group-items" style={{ marginLeft: "14px", display: "flex", flexDirection: "column", gap: "2px" }}>
+							{Object.values(SOUNDSCAPES).map((stream: any) => {
+								const isSelected = activeView.type === "ambient" && activeView.id === stream.id;
+								return (
+									<div
+										key={stream.id}
+										className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
+										onClick={(e) => {
+											e.stopPropagation();
+											handleSoundscapeChange(stream.id);
+										}}
+									>
+										<span className="soundscapes-nav-icon">🎵</span>
+										<span className="soundscapes-nav-text">{stream.name}</span>
+									</div>
+								);
+							})}
+						</div>
+					)}
 				</div>
 
-				{ambientExpanded && (
-					<div className="soundscapes-nav-group-items" style={{ marginLeft: "14px", display: "flex", flexDirection: "column", gap: "2px" }}>
-						{Object.values(SOUNDSCAPES).map((stream: any) => {
-							const isSelected = activeView.type === "ambient" && activeView.id === stream.id;
-							return (
-								<div
-									key={stream.id}
-									className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
-									onClick={() => handleSoundscapeChange(stream.id)}
-								>
-									<span className="soundscapes-nav-icon">🎵</span>
-									<span className="soundscapes-nav-text">{stream.name}</span>
-								</div>
-							);
-						})}
+				{/* Group 2: YouTube Custom Playlists */}
+				<div className="soundscapes-nav-group" style={{ marginTop: "8px" }}>
+					<div 
+						className="soundscapes-nav-group-header"
+						onClick={() => setYoutubeExpanded(!youtubeExpanded)}
+						style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "6px 10px", color: "var(--text-muted)" }}
+					>
+						<span style={{ fontSize: "0.75rem", width: "12px", textAlign: "center" }}>{youtubeExpanded ? "▼" : "▶"}</span>
+						<Icon name="youtube" />
+						<span className="soundscapes-nav-text" style={{ fontWeight: 500 }}>YouTube Playlists</span>
 					</div>
-				)}
-			</div>
 
-				{navigationItems.map(item => {
-						const isSelected = activeView.type === item.type && activeView.id === item.id;
-						const targetSoundscapeId = item.type === "youtube" ? `CUSTOM_${item.id}` : item.type === "local" ? `MUSIC_COLLECTION_${item.id}` : item.id;
-						
-						return (
-								<div
-										key={`${item.type}_${item.id}`}
+					{youtubeExpanded && (
+						<div className="soundscapes-nav-group-items" style={{ marginLeft: "14px", display: "flex", flexDirection: "column", gap: "2px" }}>
+							{youtubeItems.map((list) => {
+								const isSelected = activeView.type === "youtube" && activeView.id === list.id;
+								return (
+									<div
+										key={list.id}
 										className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
-										onClick={() => handleSoundscapeChange(targetSoundscapeId)}
+										onClick={() => handleSoundscapeChange(`CUSTOM_${list.id}`)}
+									>
+										<Icon name="youtube" />
+										<span className="soundscapes-nav-text">{list.name}</span>
+									</div>
+								);
+							})}
+							{youtubeItems.length === 0 && (
+								<div style={{ padding: "4px 24px", fontSize: "0.8em", color: "var(--text-muted)" }}>No custom streams</div>
+							)}
+						</div>
+					)}
+				</div>
+
+				{/* Group 3: Local Music Collections */}
+				<div className="soundscapes-nav-group" style={{ marginTop: "8px" }}>
+					<div 
+						className="soundscapes-nav-group-header"
+						onClick={() => {
+							setLocalExpanded(!localExpanded);
+							setActiveView({ type: "local", id: null, label: "Local Music" });
+						}}
+						style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "6px 10px", color: "var(--text-muted)" }}
+					>
+						<span style={{ fontSize: "0.75rem", width: "12px", textAlign: "center" }}>{localExpanded ? "▼" : "▶"}</span>
+						<Icon name="folder" />
+						<span className="soundscapes-nav-text" style={{ fontWeight: 500 }}>Collections</span>
+					</div>
+
+					{localExpanded && (
+						<div className="soundscapes-nav-group-items" style={{ marginLeft: "14px", display: "flex", flexDirection: "column", gap: "2px" }}>
+							{localCollections.map((collection) => {
+								const isSelected = activeView.type === "local" && activeView.id === collection.id;
+								return (
+									<div
+										key={collection.id}
+										className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
+										onClick={() => handleSoundscapeChange(`MUSIC_COLLECTION_${collection.id}`)}
+									>
+										<Icon name="folder" />
+										<span className="soundscapes-nav-text">{collection.name}</span>
+									</div>
+								);
+							})}
+							{localCollections.length === 0 && (settings.myMusicIndex || []).length > 0 && (
+								<div
+									className={`soundscapes-nav-item ${activeView.type === "local" ? "is-active" : ""}`}
+									onClick={() => setActiveView({ type: "local", id: null, label: "Local Music Library" })}
 								>
-										{/* Swapped out emojis for unified Lucide vector icons */}
-										{item.icon === "youtube" ? (
-												<Icon name="youtube" />
-										) : item.icon === "folder" ? (
-												<Icon name="folder" />
-										) : (
-												<Icon name="music" />
-										)}
-										<span className="soundscapes-nav-text">{item.name}</span>
+									<Icon name="music" />
+									<span className="soundscapes-nav-text">All Local Music</span>
 								</div>
-						);
-				})}
-		</div>
-	);
+							)}
+						</div>
+					)}
+				</div>
+			</div>
+		);
+	};
 
 	// Render definitions for the dynamic Song track list table
 	const renderTrackTable = () => (
@@ -287,7 +369,7 @@ const App = () => {
 						const isThisRowPlaying = isCurrentLocal || isCurrentStreaming;
 
 						return (
-							<tr key={track.id} onDoubleClick={() => handleTrackPlay(track)}>
+							<tr key={track.id} onClick={() => handleTrackPlay(track)} style={{ cursor: "pointer" }}>
 								<td>
 									{isThisRowPlaying && localPlayerState?.playerState === PLAYER_STATE.PLAYING && <Icon name="volume-2" />}
 									{isThisRowPlaying && localPlayerState?.playerState === PLAYER_STATE.PAUSED && <Icon name="volume" />}
