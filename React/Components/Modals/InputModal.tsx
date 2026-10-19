@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 interface InputModalProps {
     isOpen: boolean;
@@ -10,12 +10,16 @@ interface InputModalProps {
 
 export const InputModal = ({ isOpen, title, fields, onSubmit, onClose }: InputModalProps) => {
     const [values, setValues] = useState<Record<string, string>>({});
+    const prevOpen = useRef(false);
 
+    // Only reset the form when the modal transitions from CLOSED to OPEN
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && !prevOpen.current) {
             const initial = fields.reduce((acc, f) => ({ ...acc, [f.key]: "" }), {});
             setValues(initial);
         }
+        prevOpen.current = isOpen;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
     if (!isOpen) return null;
@@ -39,7 +43,9 @@ export const InputModal = ({ isOpen, title, fields, onSubmit, onClose }: InputMo
                 <div className="soundscapes-modal-actions">
                     <button className="btn-cancel" onClick={onClose}>Cancel</button>
                     <button className="btn-submit" onClick={() => {
-                        if (Object.values(values).every(v => v.trim() !== "")) {
+                        // 🔥 FIX: Removed the "every field must be filled" check. 
+                        // We only strictly require the FIRST field (URL or Track ID)
+                        if (values[fields[0].key]?.trim()) {
                             onSubmit(values);
                             onClose();
                         }

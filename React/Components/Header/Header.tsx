@@ -47,17 +47,36 @@ const Header = () => {
 		
 		if (!ytPlayerElement || !container) return;
 
+		// 1. Hide if local music
 		if (isLocalActive || !hasTrack) {
 			ytPlayerElement.style.setProperty("display", "none", "important");
+			if (ytPlayerElement.parentElement === container && plugin) {
+				(plugin as any).resetPlayerToStatusBar();
+			}
 			return;
 		}
 
-		// 🔥 THIS IS THE CRITICAL LINE: Attach the IFrame inside the React div
+		// 🔥 2. ADD THE NATIVE PLAYLIST CHECK HERE
+		const currentPlaylist = plugin?.settings.customSoundscapes?.find(
+			p => p.id === plugin?.settings.soundscape.replace("CUSTOM_", "")
+		);
+
+		if (currentPlaylist?.isNativePlaylist) {
+			// Keep the IFrame in the status bar. Just hide it so it doesn't float over the UI.
+			if (ytPlayerElement.parentElement === container && plugin) {
+				(plugin as any).resetPlayerToStatusBar();
+			}
+			ytPlayerElement.style.setProperty("display", "none", "important");
+			return;
+		}
+		// 🔥 END OF NATIVE CHECK
+
+		// 3. Move the IFrame into the React header for standard playlists
 		if (ytPlayerElement.parentElement !== container) {
 			container.appendChild(ytPlayerElement);
 		}
 
-		// 🔥 Force the IFrame to fill the container, no floating!
+		// 4. Apply styles
 		ytPlayerElement.style.setProperty("display", "block", "important");
 		ytPlayerElement.style.setProperty("position", "absolute", "important");
 		ytPlayerElement.style.setProperty("top", "0", "important");
@@ -68,7 +87,7 @@ const Header = () => {
 		ytPlayerElement.style.setProperty("z-index", "1", "important");
 
 		return () => {
-			if (plugin && typeof (plugin as any).resetPlayerToStatusBar === "function") {
+			if (ytPlayerElement && ytPlayerElement.parentElement === container && plugin) {
 				(plugin as any).resetPlayerToStatusBar();
 			}
 		};

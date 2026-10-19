@@ -4,6 +4,8 @@ export interface CustomSoundscape {
     id: string;
     name: string;
     tracks: CustomSoundscapeTrack[];
+    isNativePlaylist?: boolean;
+    nativePlaylistId?: string;
 }
 
 export interface CustomSoundscapeTrack {
@@ -30,6 +32,10 @@ export interface Player {
     getPlayerState(): number; // Added for the polling sync
     setVolume(volume: Number): void;
     loadVideoById(options: { videoId: String | undefined }): void;
+    loadPlaylist(options: { list: string; listType: string; index?: number }): void;
+    nextVideo(): void;
+    previousVideo(): void;
+    getVideoData(): { title: string; video_id: string; author: string };
     destroy(): void; // Keep this so the plugin cleans up audio on unload
 }
 

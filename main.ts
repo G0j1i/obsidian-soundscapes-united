@@ -57,6 +57,7 @@ export default class SoundscapesPlugin extends Plugin {
     reindexTimer: NodeJS.Timeout | null = null;
     shuffleQueue: number[] = [];
     shuffleQueueSpot: number = 0;
+    ytPollingInterval: NodeJS.Timeout | null = null;
 
     // Put this anywhere in the class
     async addMusicCollection(folderPath: string) {
@@ -224,7 +225,9 @@ export default class SoundscapesPlugin extends Plugin {
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
             const track = customSoundscape?.tracks[this.currentTrackIndex];
+            
             if (!track) return undefined;
+            
             return {
                 fileName: track.name,
                 fullPath: track.id,
@@ -434,17 +437,37 @@ export default class SoundscapesPlugin extends Plugin {
                     try {
                         const currentTime = this.player.getCurrentTime() || 0;
                         const ytState = this.player.getPlayerState();
+                        
                         let mappedState = this.localPlayerStateObservable.getValue().playerState;
                         if (ytState === 1 || ytState === 3) mappedState = PLAYER_STATE.PLAYING;
                         else if (ytState === 2) mappedState = PLAYER_STATE.PAUSED;
+                        else if (ytState === 0) mappedState = PLAYER_STATE.ENDED;
 
-                        const prevTime = this.localPlayerStateObservable.getValue().currentTime || 0;
-                        const safeTime = (currentTime === 0 && mappedState === PLAYER_STATE.PAUSED && prevTime > 0) ? prevTime : currentTime;
+                        let currentTrack = this.getCurrentTrackData();
+                        
+                        // 🔥 Native Playlist Polling
+                        const customSoundscape = this.getCurrentCustomSoundscape();
+                        if (customSoundscape?.isNativePlaylist && typeof this.player.getVideoData === "function") {
+                            const videoData = this.player.getVideoData();
+                            if (videoData && videoData.title) {
+                                currentTrack = {
+                                    fileName: videoData.video_id,
+                                    fullPath: videoData.video_id,
+                                    title: videoData.title,
+                                    artist: videoData.author || "YouTube",
+                                    album: customSoundscape.name,
+                                    duration: this.player.getDuration() || 0
+                                };
+                            }
+                        } else if (currentTrack) {
+                            currentTrack.duration = this.player.getDuration() || 0;
+                        }
 
                         if (mappedState !== this.localPlayerStateObservable.getValue().playerState) {
                             this.onStateChange({ data: mappedState });
                         }
-                        this.updateLocalPlayerState({ currentTime: safeTime });
+
+                        this.updateLocalPlayerState({ currentTime, currentTrack });
                     } catch (e) {}
                 }
             }, 1000);
@@ -654,6 +677,13 @@ export default class SoundscapesPlugin extends Plugin {
             const customSoundscape = this.getCurrentCustomSoundscape();
             const total = customSoundscape?.tracks.length || 0;
 
+            if (customSoundscape?.isNativePlaylist) {
+                if (this.player && typeof this.player.previousVideo === "function") {
+                    this.player.previousVideo();
+                }
+                return;
+            }
+
             if (total > 0) {
                 if (this.settings.playMode === "shuffle") {
                     let newIndex = this.currentTrackIndex;
@@ -704,7 +734,14 @@ export default class SoundscapesPlugin extends Plugin {
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
             const total = customSoundscape?.tracks.length || 0;
-
+            
+            // Native Playlist Handling
+            if (customSoundscape?.isNativePlaylist) {
+                if (this.player && typeof this.player.nextVideo === "function") {
+                    this.player.nextVideo();
+                }
+                return;
+            }
             if (total > 0) {
                 if (this.settings.playMode === "shuffle") {
                     let newIndex = this.currentTrackIndex;
@@ -920,7 +957,6 @@ export default class SoundscapesPlugin extends Plugin {
                     this.next();
                 }
                 break;
-                this.onSoundscapeChange();
         }
     }
 
@@ -960,24 +996,46 @@ export default class SoundscapesPlugin extends Plugin {
             this.soundscapeType = SOUNDSCAPE_TYPE.STANDARD;
         }
 
+        const currentTrackData = this.getCurrentTrackData();
+
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
-            const track = customSoundscape?.tracks[this.currentTrackIndex];
-
-            if (track) {
-                if (this.player && typeof this.player.loadVideoById === "function") {
-                    this.player.loadVideoById({ videoId: track.id });
-                    if (!autoplay && typeof this.player.pauseVideo === "function") {
-                        this.player.pauseVideo();
-                    }
-                } else {
-                    console.warn("YouTube Player not ready, retrying...");
-                    setTimeout(() => this.onSoundscapeChange(autoplay), 1000);
-                    return;
+            
+            // 🔥 Native Playlist Playback
+            if (customSoundscape?.isNativePlaylist && customSoundscape.nativePlaylistId) {
+                // 🔥 Assign to a local constant so TS knows it's a string
+                const playlistId = customSoundscape.nativePlaylistId; 
+                
+                if (this.player && typeof this.player.loadPlaylist === "function") {
+                    setTimeout(() => {
+                        this.player.loadPlaylist({
+                            list: playlistId,
+                            listType: "playlist",
+                            index: 0
+                        });
+                        if (!autoplay) this.player.pauseVideo();
+                    }, 50);
                 }
-                this.nowPlaying.setText(track.name || "");
+                this.nowPlaying.setText(customSoundscape.name || "Native Playlist");
                 this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
                 this.localPlayer.pause();
+            } else {
+                // Standard Custom Playlist
+                const track = customSoundscape?.tracks[this.currentTrackIndex];
+                if (track) {
+                    if (this.player && typeof this.player.loadVideoById === "function") {
+                        setTimeout(() => {
+                            this.player.loadVideoById({ videoId: track.id });
+                            if (!autoplay) this.player.pauseVideo();
+                        }, 50);
+                    } else {
+                        console.warn("YouTube Player not ready yet.");
+                        return;
+                    }
+                    this.nowPlaying.setText(track.name || "");
+                    this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
+                    this.localPlayer.pause();
+                }
             }
         } else if (this.isMusicCollectionActive()) {
             const track = this.settings.myMusicIndex[this.currentTrackIndex];
@@ -1022,7 +1080,6 @@ export default class SoundscapesPlugin extends Plugin {
             }
         }
 
-        const currentTrackData = this.getCurrentTrackData();
         this.updateLocalPlayerState({
             currentTrack: currentTrackData,
             playerState: autoplay ? PLAYER_STATE.PLAYING : PLAYER_STATE.PAUSED,
@@ -1091,7 +1148,6 @@ export default class SoundscapesPlugin extends Plugin {
             ...updateObject,
         });
     }
-    ytPollingInterval: NodeJS.Timeout | null = null;
 
     /******************************************************************************************************************/
     //#endregion Settings and State
