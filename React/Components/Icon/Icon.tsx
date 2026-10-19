@@ -1,23 +1,23 @@
-import React from "react";
 import { getIcon } from "obsidian";
+import { jsx, jsxs } from "react/jsx-runtime";
 
-/**
- * Given an icon name, converts a Obsidian icon to a usable SVG string and embeds it into a span.
- * @returns
- */
 const Icon = ({ name }: { name: string }) => {
-	const iconText = new XMLSerializer().serializeToString(
-		getIcon(name) || new Node()
-	);
+    const icon = getIcon(name);
 
-	return (
-		<span
-			className="lucide-icon"
-			dangerouslySetInnerHTML={{
-				__html: iconText,
-			}}
-		></span>
-	);
+    // If the icon doesn't exist in this Obsidian version, render an empty span
+    // instead of crashing. (Earlier versions of this file crashed the whole
+    // React tree because they tried `new Node()`, which is an abstract class.)
+    if (!icon) {
+        return <span className="lucide-icon" aria-hidden="true" />;
+    }
+
+    const iconText = new XMLSerializer().serializeToString(icon);
+    return (
+        <span
+            className="lucide-icon"
+            dangerouslySetInnerHTML={{ __html: iconText }}
+        />
+    );
 };
 
 export default Icon;

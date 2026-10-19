@@ -13,7 +13,7 @@ import MusicMetadata from "music-metadata";
 import Observable from "src/Utils/Observable";
 import { ReactView, SOUNDSCAPES_REACT_VIEW } from "./React/Views/ReactView";
 import getAllMusicFiles, { getMimeType } from "src/Utils/getAllMusicFiles";
-import { LocalPlayerState, Player } from "src/Types/Interfaces";
+import { LocalPlayerState, Player, LocalMusicFile } from "src/Types/Interfaces";
 import { PLAYER_STATE, SOUNDSCAPE_TYPE } from "src/Types/Enums";
 import SOUNDSCAPES from "src/Soundscapes";
 import {
@@ -23,10 +23,6 @@ import {
 } from "src/Settings/Settings";
 import createShuffleQueue from "src/Utils/createShuffleQueue";
 
-/**
- * This allows a "live-reload" of Obsidian when developing the plugin.
- * Any changes to the code will force reload Obsidian.
- */
 if (process.env.NODE_ENV === "development") {
     new EventSource("http://127.0.0.1:8000/esbuild").addEventListener(
         "change",
@@ -62,6 +58,35 @@ export default class SoundscapesPlugin extends Plugin {
     shuffleQueue: number[] = [];
     shuffleQueueSpot: number = 0;
 
+    // Put this anywhere in the class
+    async addMusicCollection(folderPath: string) {
+        const newCol = {
+            id: uuidv4(),
+            name: path.basename(folderPath),
+            folderPath: folderPath,
+            musicIndex: [],
+            currentTrackIndex: 0
+        };
+        this.settings.musicCollections.push(newCol);
+        this.settings.soundscape = `MUSIC_COLLECTION_${newCol.id}`;
+        await this.saveSettings();
+        this.populateChangeSoundscapeButton();
+        this.indexMusicLibrary();
+    }
+
+    resetPlayerToStatusBar() {
+        const ytPlayerElement = document.getElementById("player");
+        if (ytPlayerElement && this.statusBarItem) {
+            this.statusBarItem.appendChild(ytPlayerElement);
+            ytPlayerElement.style.removeProperty("position");
+            ytPlayerElement.style.removeProperty("left");
+            ytPlayerElement.style.removeProperty("top");
+            ytPlayerElement.style.removeProperty("z-index");
+            ytPlayerElement.style.removeProperty("border-radius");
+            // Let the old status bar CSS handle the display
+        }
+    }
+
     async onload() {
         await this.loadSettings();
 
@@ -74,16 +99,15 @@ export default class SoundscapesPlugin extends Plugin {
         this.localPlayerStateObservable = new Observable({});
         this.debouncedSaveSettings = debounce(this.saveSettings, 500, true);
 
-        this.versionCheck();
+        // NOTE: versionCheck disabled because the original repo 404s and breaks the load sequence.
+        // this.versionCheck();
 
         this.statusBarItem = this.addStatusBarItem();
         this.statusBarItem.addClass("soundscapesroot");
-        
-        // FIX: Create the UI controls immediately so they are never undefined!
+
         this.createControls();
         this.createPlayer();
-        
-        // Trigger initial soundscape state (allows local music to work instantly)
+
         this.onSoundscapeChange(this.settings.autoplay);
 
         this.registerView(
@@ -106,19 +130,23 @@ export default class SoundscapesPlugin extends Plugin {
         );
         this.ribbonButton.hide();
 
-        // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new SoundscapesSettingsTab(this.app, this));
 
         if (this.isMusicCollectionActive()) {
             this.ribbonButton.show();
-
-            // Delay this so startup isn't impacted
             setTimeout(() => {
                 this.indexMusicLibrary();
             }, 1000);
         }
 
-        // Adding commands to be run from command palette or bind a hotkey to them
+        this.addCommand({
+            id: "open-my-music-view",
+            name: "Open My Music View",
+            callback: () => {
+                this.OpenMyMusicView();
+            },
+        });
+
         this.addCommand({
             id: "go-to-next-track",
             name: "Go to next track",
@@ -155,15 +183,23 @@ export default class SoundscapesPlugin extends Plugin {
         if (this.reindexTimer) {
             clearTimeout(this.reindexTimer);
         }
+        if (this.ytPollingInterval) {
+            clearInterval(this.ytPollingInterval); // Stop polling
+        }
         if (this.closeVolumePopupHandler) {
             document.removeEventListener("click", this.closeVolumePopupHandler);
         }
+        
+        // Destroy the YouTube player and remove the orphaned IFrame
+        if (this.player && typeof (this.player as any).destroy === "function") {
+            (this.player as any).destroy();
+        }
+        const ytPlayerElement = document.getElementById("player");
+        if (ytPlayerElement) {
+            ytPlayerElement.remove();
+        }
     }
 
-    /**
-     * Because we only have the id of the current soundscape, we need a helper function to get the soundscape itself when it's a custom one
-     * @returns
-     */
     getCurrentCustomSoundscape() {
         return this.settings.customSoundscapes.find(
             (soundscape) =>
@@ -184,57 +220,51 @@ export default class SoundscapesPlugin extends Plugin {
         return this.settings.soundscape.startsWith("MUSIC_COLLECTION_");
     }
 
+    private getCurrentTrackData(): LocalMusicFile | undefined {
+        if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
+            const customSoundscape = this.getCurrentCustomSoundscape();
+            const track = customSoundscape?.tracks[this.currentTrackIndex];
+            if (!track) return undefined;
+            return {
+                fileName: track.name,
+                fullPath: track.id,
+                title: track.name,
+                artist:
+                    (track as any).author ||
+                    (track as any).channelName ||
+                    "YouTube Creator",
+                album: customSoundscape?.name || "YouTube Playlist",
+                duration: (track as any).duration || 0,
+            };
+        } else if (this.isMusicCollectionActive()) {
+            return this.settings.myMusicIndex[this.currentTrackIndex];
+        } else {
+            const ambient = SOUNDSCAPES[this.settings.soundscape];
+            return ambient
+                ? {
+                      fileName: ambient.name,
+                      fullPath: ambient.youtubeId,
+                      title: ambient.name,
+                      artist: "Ambient Radio",
+                      album: "Soundscapes",
+                      duration: 0,
+                  }
+                : undefined;
+        }
+    }
+
     /******************************************************************************************************************/
     //#region Startup
     /******************************************************************************************************************/
 
-    /**
-     * Check the local plugin version against github. If there is a new version, notify the user.
-     */
     async versionCheck() {
-        const localVersion = process.env.PLUGIN_VERSION;
-        const stableVersion = await requestUrl(
-            "https://raw.githubusercontent.com/andrewmcgivery/obsidian-soundscapes/main/package.json"
-        ).then(async (res) => {
-            if (res.status === 200) {
-                const response = await res.json;
-                return response.version;
-            }
-        });
-        const betaVersion = await requestUrl(
-            "https://raw.githubusercontent.com/andrewmcgivery/obsidian-soundscapes/beta/package.json"
-        ).then(async (res) => {
-            if (res.status === 200) {
-                const response = await res.json;
-                return response.version;
-            }
-        });
-
-        if (localVersion?.indexOf("beta") !== -1) {
-            if (localVersion !== betaVersion) {
-                new Notice(
-                    "There is a beta update available for the Soundscapes plugin. Please update to to the latest version to get the latest features!",
-                    0
-                );
-            }
-        } else if (localVersion !== stableVersion) {
-            new Notice(
-                "There is an update available for the Soundscapes plugin. Please update to to the latest version to get the latest features!",
-                0
-            );
-        }
+        // Disabled - see comment in onload
     }
 
-    /**
-     * Given a file path in settings, get all the music files in that folder.
-     * Convert those music files to a index of their music metadata.
-     * Finally, reschedule the next reindex based on settings.
-     */
     async indexMusicLibrary() {
         console.time("MusicIndex");
         const collection = this.getActiveMusicCollection();
 
-        // Clear any timers if they exist
         if (this.reindexTimer) {
             clearTimeout(this.reindexTimer);
         }
@@ -273,7 +303,6 @@ export default class SoundscapesPlugin extends Plugin {
         const songs = await Promise.all(musicPromises);
         console.timeEnd("MusicIndex");
 
-        // Update both the collection's stored index and the active settings
         collection.musicIndex = songs;
         this.settings.myMusicIndex = songs;
         this.settings.myMusicFolderPath = collection.folderPath;
@@ -294,7 +323,6 @@ export default class SoundscapesPlugin extends Plugin {
 
         this.saveSettings();
 
-        // Reschedule index based on settings
         if (this.settings.reindexFrequency !== "never") {
             this.reindexTimer = setTimeout(
                 () => this.indexMusicLibrary(),
@@ -323,9 +351,6 @@ export default class SoundscapesPlugin extends Plugin {
     //#region Create UI Elements
     /******************************************************************************************************************/
 
-    /**
-     * Opens react view of MyMusic
-     */
     async OpenMyMusicView() {
         const { workspace } = this.app;
 
@@ -333,10 +358,8 @@ export default class SoundscapesPlugin extends Plugin {
         const leaves = workspace.getLeavesOfType(SOUNDSCAPES_REACT_VIEW);
 
         if (leaves.length > 0) {
-            // A leaf with our view already exists, use that
             leaf = leaves[0];
         } else {
-            // Our view could not be found in the workspace, create a new leaf for it
             leaf = workspace.getLeaf(true);
             await leaf.setViewState({
                 type: SOUNDSCAPES_REACT_VIEW,
@@ -344,15 +367,10 @@ export default class SoundscapesPlugin extends Plugin {
             });
         }
 
-        // "Reveal" the leaf in case it is in a collapsed sidebar
         workspace.revealLeaf(leaf);
     }
 
-    /**
-     * Create the Youtube player
-     */
     createPlayer() {
-        // Load in youtube iframe api script
         const ytScript = this.statusBarItem.createEl("script", {
             attr: {
                 src: "https://www.youtube.com/iframe_api",
@@ -365,13 +383,11 @@ export default class SoundscapesPlugin extends Plugin {
             this.onPlayerReady();
         });
 
-        // Create div to insert the video into
         this.statusBarItem.createEl("div", {
             attr: { id: "player" },
             cls: "soundscapesroot-player",
         });
 
-        // Create local media player and listen to events
         this.localPlayer = new Audio();
         this.localPlayer.volume = this.settings.volume / 100;
         this.localPlayer.addEventListener("play", () => {
@@ -383,16 +399,15 @@ export default class SoundscapesPlugin extends Plugin {
         this.localPlayer.addEventListener("ended", () => {
             this.onStateChange({ data: PLAYER_STATE.ENDED });
         });
-
         this.localPlayer.addEventListener("timeupdate", () => {
             this.updateLocalPlayerState({
                 currentTime: this.localPlayer.currentTime,
             });
         });
 
-        // Once the API is ready, create a player
-        // @ts-ignore
-        window.onYouTubeIframeAPIReady = () => {
+                const setupYouTubePlayer = () => {
+            // @ts-ignore
+            if (this.player) return; 
             // @ts-ignore
             this.player = new YT.Player("player", {
                 height: "100",
@@ -402,69 +417,83 @@ export default class SoundscapesPlugin extends Plugin {
                     fs: 0,
                     disablekb: 1,
                     controls: 0,
+                    enablejsapi: 1, // CRITICAL: Allows reliable API control
                 },
                 events: {
                     onReady: this.onPlayerReady.bind(this),
                     onStateChange: (e: any) => {
-                        // This is to suppress the player from sending events when it's not the active player
                         if (!this.isMusicCollectionActive()) {
                             this.onStateChange.bind(this)(e);
                         }
                     },
                 },
             });
+
+            this.ytPollingInterval = setInterval(() => {
+                if (this.player && typeof this.player.getCurrentTime === "function" && !this.isMusicCollectionActive()) {
+                    try {
+                        const currentTime = this.player.getCurrentTime() || 0;
+                        const ytState = this.player.getPlayerState();
+                        let mappedState = this.localPlayerStateObservable.getValue().playerState;
+                        if (ytState === 1 || ytState === 3) mappedState = PLAYER_STATE.PLAYING;
+                        else if (ytState === 2) mappedState = PLAYER_STATE.PAUSED;
+
+                        const prevTime = this.localPlayerStateObservable.getValue().currentTime || 0;
+                        const safeTime = (currentTime === 0 && mappedState === PLAYER_STATE.PAUSED && prevTime > 0) ? prevTime : currentTime;
+
+                        if (mappedState !== this.localPlayerStateObservable.getValue().playerState) {
+                            this.onStateChange({ data: mappedState });
+                        }
+                        this.updateLocalPlayerState({ currentTime: safeTime });
+                    } catch (e) {}
+                }
+            }, 1000);
         };
+
+        // @ts-ignore
+        if (window.YT && window.YT.Player) {
+            setupYouTubePlayer();
+        } else {
+            // @ts-ignore
+            window.onYouTubeIframeAPIReady = setupYouTubePlayer;
+        }
     }
 
-    /**
-     * Create all the UI elements
-     */
     createControls() {
-        // Previous Button
         this.previousButton = this.statusBarItem.createEl("button", {
             cls: "soundscapesroot-previousbutton",
         });
         setIcon(this.previousButton, "skip-back");
         this.previousButton.onclick = () => this.previous();
 
-        // Play Button
         this.playButton = this.statusBarItem.createEl("button", {});
         setIcon(this.playButton, "play");
         this.playButton.onclick = () => this.play();
 
-        // Pause Button
         this.pauseButton = this.statusBarItem.createEl("button", {});
         setIcon(this.pauseButton, "pause");
         this.pauseButton.onclick = () => this.pause();
 
-        // Next Button
         this.nextButton = this.statusBarItem.createEl("button", {
             cls: "soundscapesroot-nextbutton",
         });
         setIcon(this.nextButton, "skip-forward");
         this.nextButton.onclick = () => this.next();
 
-        // Repeat/Shuffle Toggle Button
         this.repeatToggleButton = this.statusBarItem.createEl("button", {
             cls: "soundscapesroot-repeattogglebutton",
         });
         this.updateRepeatToggleIcon();
         this.repeatToggleButton.onclick = () => this.toggleRepeat();
 
-        // Change Soundscape Button
         const changeSoundscapeButton = this.statusBarItem.createEl("button", {
             cls: "soundscapesroot-changesoundscapebutton",
         });
         setIcon(changeSoundscapeButton, "list-music");
-        this.changeSoundscapeSelect = changeSoundscapeButton.createEl(
-            "select",
-            {
-                cls: "soundscapesroot-changesoundscapeselect",
-                attr: {
-                    id: "soundscapesroot-changesoundscapeselect",
-                },
-            }
-        );
+        
+        this.changeSoundscapeSelect = changeSoundscapeButton.createEl("select", {
+            cls: "soundscapesroot-changesoundscapeselect",
+        });
         this.populateChangeSoundscapeButton();
         this.changeSoundscapeSelect.addEventListener(
             "change",
@@ -475,7 +504,6 @@ export default class SoundscapesPlugin extends Plugin {
             }
         );
 
-        // Now Playing
         this.nowPlayingRoot = this.statusBarItem.createEl("div", {
             cls: "soundscapesroot-nowplaying",
         });
@@ -484,7 +512,6 @@ export default class SoundscapesPlugin extends Plugin {
         });
         this.toggleNowPlayingScroll();
 
-        // Volume button (always visible)
         this.volumeButton = this.statusBarItem.createEl("button", {
             cls: "soundscapesroot-volumebutton",
         });
@@ -492,14 +519,21 @@ export default class SoundscapesPlugin extends Plugin {
         this.updateVolumeIcon(this.settings.volume);
         this.volumeButton.onclick = (e: MouseEvent) => {
             e.stopPropagation();
-            if (this.volumePopup.hasClass("soundscapesroot-volumePopup--visible")) {
-                this.volumePopup.removeClass("soundscapesroot-volumePopup--visible");
+            if (
+                this.volumePopup.hasClass(
+                    "soundscapesroot-volumePopup--visible"
+                )
+            ) {
+                this.volumePopup.removeClass(
+                    "soundscapesroot-volumePopup--visible"
+                );
             } else {
-                this.volumePopup.addClass("soundscapesroot-volumePopup--visible");
+                this.volumePopup.addClass(
+                    "soundscapesroot-volumePopup--visible"
+                );
             }
         };
 
-        // Volume popup (hidden by default, appears above button)
         this.volumePopup = this.volumeButton.createEl("div", {
             cls: "soundscapesroot-volumePopup",
         });
@@ -517,8 +551,14 @@ export default class SoundscapesPlugin extends Plugin {
         );
 
         this.closeVolumePopupHandler = () => {
-            if (this.volumePopup.hasClass("soundscapesroot-volumePopup--visible")) {
-                this.volumePopup.removeClass("soundscapesroot-volumePopup--visible");
+            if (
+                this.volumePopup.hasClass(
+                    "soundscapesroot-volumePopup--visible"
+                )
+            ) {
+                this.volumePopup.removeClass(
+                    "soundscapesroot-volumePopup--visible"
+                );
             }
         };
         document.addEventListener("click", this.closeVolumePopupHandler);
@@ -527,20 +567,15 @@ export default class SoundscapesPlugin extends Plugin {
         });
     }
 
-    /**
-     * Populates the dropdown on the miniplayer with all available soundscapes
-     * Organized cleanly using nested option groups (optgroups)
-     */
     populateChangeSoundscapeButton() {
-        // Defensive guard against undefined select element
         if (!this.changeSoundscapeSelect) return;
 
         this.changeSoundscapeSelect.replaceChildren();
 
-        // 1. Group: 📻 Ambient Streams (Always Visible)
-        const ambientGroup = this.changeSoundscapeSelect.createEl("optgroup", {
-            attr: { label: "📻 Ambient Streams" }
-        });
+        const ambientGroup = this.changeSoundscapeSelect.createEl(
+            "optgroup",
+            { attr: { label: "📻 Ambient Streams" } }
+        );
         Object.values(SOUNDSCAPES).forEach((soundscape) => {
             ambientGroup.createEl("option", {
                 text: soundscape.name,
@@ -548,14 +583,14 @@ export default class SoundscapesPlugin extends Plugin {
             });
         });
 
-        // 2. Group: ▶ YouTube Playlists (Only if valid lists exist)
         const validCustomPlaylists = this.settings.customSoundscapes.filter(
             (cs) => cs.tracks && cs.tracks.length > 0
         );
         if (validCustomPlaylists.length > 0) {
-            const youtubeGroup = this.changeSoundscapeSelect.createEl("optgroup", {
-                attr: { label: "▶𝚈𝚘𝚞𝚝𝚞𝚋𝚎" }
-            });
+            const youtubeGroup = this.changeSoundscapeSelect.createEl(
+                "optgroup",
+                { attr: { label: "▶𝚈𝚘𝚞𝚝𝚞𝚋𝚎" } }
+            );
             validCustomPlaylists.forEach((customSoundscape) => {
                 youtubeGroup.createEl("option", {
                     text: customSoundscape.name,
@@ -564,11 +599,14 @@ export default class SoundscapesPlugin extends Plugin {
             });
         }
 
-        // 3. Group: 📁 Local Music Libraries (Only if folders exist)
-        if (this.settings.musicCollections && this.settings.musicCollections.length > 0) {
-            const localGroup = this.changeSoundscapeSelect.createEl("optgroup", {
-                attr: { label: "📁 Local Music Libraries" }
-            });
+        if (
+            this.settings.musicCollections &&
+            this.settings.musicCollections.length > 0
+        ) {
+            const localGroup = this.changeSoundscapeSelect.createEl(
+                "optgroup",
+                { attr: { label: "📁 Local Music Libraries" } }
+            );
             this.settings.musicCollections.forEach((collection) => {
                 localGroup.createEl("option", {
                     text: collection.name,
@@ -577,7 +615,6 @@ export default class SoundscapesPlugin extends Plugin {
             });
         }
 
-        // Bind the current active selection back to the selector value
         this.changeSoundscapeSelect.value = this.settings.soundscape;
     }
 
@@ -589,23 +626,9 @@ export default class SoundscapesPlugin extends Plugin {
     //#region Control Player
     /******************************************************************************************************************/
 
-    /**
-     * Plays the current track. When it's a live video, attempt to jump to the "live" portion.
-     */
     play() {
-        if (
-            this.soundscapeType === SOUNDSCAPE_TYPE.STANDARD &&
-            SOUNDSCAPES[this.settings.soundscape].isLiveVideo
-        ) {
-            this.player?.seekTo(this.player.getDuration());
-        }
-
         if (this.isMusicCollectionActive()) {
-            // If we don't currently have an audio source because we recently changed folders but now we do have an index, play the first song
-            if (
-                this.localPlayer.src === location.href &&
-                this.settings.myMusicIndex.length > 0
-            ) {
+            if (this.localPlayer.src === location.href && this.settings.myMusicIndex.length > 0) {
                 this.currentTrackIndex = 0;
                 this.onSoundscapeChange(true);
             } else {
@@ -613,37 +636,43 @@ export default class SoundscapesPlugin extends Plugin {
             }
         } else {
             this.player?.playVideo();
+            this.onStateChange({ data: PLAYER_STATE.PLAYING });
         }
     }
 
-    /**
-     * Pause the current track.
-     */
     pause() {
         if (this.isMusicCollectionActive()) {
             this.localPlayer.pause();
         } else {
             this.player?.pauseVideo();
+            this.onStateChange({ data: PLAYER_STATE.PAUSED });
         }
     }
 
-    /**
-     * Skip to the previous track.
-     */
-    previous() {
+   previous() {
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
+            const total = customSoundscape?.tracks.length || 0;
 
-            if (this.currentTrackIndex === 0) {
-                this.currentTrackIndex =
-                    (customSoundscape?.tracks.length || 1) - 1;
-            } else {
-                this.currentTrackIndex--;
+            if (total > 0) {
+                if (this.settings.playMode === "shuffle") {
+                    let newIndex = this.currentTrackIndex;
+                    if (total > 1) {
+                        while (newIndex === this.currentTrackIndex) {
+                            newIndex = Math.floor(Math.random() * total);
+                        }
+                    }
+                    this.currentTrackIndex = newIndex;
+                } else {
+                    if (this.currentTrackIndex === 0) {
+                        this.currentTrackIndex = total - 1;
+                    } else {
+                        this.currentTrackIndex--;
+                    }
+                }
             }
         } else if (this.isMusicCollectionActive()) {
-            // Are we in shuffle mode?
             if (this.settings.playMode === "shuffle") {
-                // If Shuffle queue is empty, let's populate it
                 if (this.shuffleQueue.length === 0) {
                     this.shuffleQueue = createShuffleQueue(
                         this.settings.myMusicIndex
@@ -652,17 +681,14 @@ export default class SoundscapesPlugin extends Plugin {
                 }
 
                 if (this.shuffleQueueSpot === 0) {
-                    // If we are at the beginning, wrap around to the end!
                     this.currentTrackIndex =
                         this.shuffleQueue[this.shuffleQueue.length - 1];
                 } else {
-                    // Otherwise, go to the previous song in the shuffle queue
                     this.shuffleQueueSpot--;
                     this.currentTrackIndex =
                         this.shuffleQueue[this.shuffleQueueSpot];
                 }
             } else {
-                // Not in shuffle mode, go to next song
                 if (this.currentTrackIndex === 0) {
                     this.currentTrackIndex =
                         this.settings.myMusicIndex.length - 1;
@@ -674,22 +700,32 @@ export default class SoundscapesPlugin extends Plugin {
         this.onSoundscapeChange();
     }
 
-    /**
-     * Skip to the next track.
-     */
     next() {
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
+            const total = customSoundscape?.tracks.length || 0;
 
-            if (customSoundscape?.tracks[this.currentTrackIndex + 1]) {
-                this.currentTrackIndex++;
-            } else {
-                this.currentTrackIndex = 0;
+            if (total > 0) {
+                if (this.settings.playMode === "shuffle") {
+                    let newIndex = this.currentTrackIndex;
+                    // Pick a random track that isn't the current one
+                    if (total > 1) {
+                        while (newIndex === this.currentTrackIndex) {
+                            newIndex = Math.floor(Math.random() * total);
+                        }
+                    }
+                    this.currentTrackIndex = newIndex;
+                } else {
+                    // Repeat mode (sequential)
+                    if (customSoundscape?.tracks[this.currentTrackIndex + 1]) {
+                        this.currentTrackIndex++;
+                    } else {
+                        this.currentTrackIndex = 0;
+                    }
+                }
             }
         } else if (this.isMusicCollectionActive()) {
-            // Are we in shuffle mode?
             if (this.settings.playMode === "shuffle") {
-                // If Shuffle queue is empty, let's populate it
                 if (this.shuffleQueue.length === 0) {
                     this.shuffleQueue = createShuffleQueue(
                         this.settings.myMusicIndex
@@ -698,18 +734,15 @@ export default class SoundscapesPlugin extends Plugin {
                 }
 
                 if (this.shuffleQueueSpot === this.shuffleQueue.length - 1) {
-                    // If we get to the end of all possible songs to shuffle, go back to the start and reset the shuffle queue
                     this.currentTrackIndex = this.shuffleQueue[0];
                     this.shuffleQueue = [];
                     this.shuffleQueueSpot = 0;
                 } else {
-                    // Otherwise, go to the next song in the shuffle queue
                     this.shuffleQueueSpot++;
                     this.currentTrackIndex =
                         this.shuffleQueue[this.shuffleQueueSpot];
                 }
             } else {
-                // Not in shuffle mode, go to next song
                 if (this.settings.myMusicIndex[this.currentTrackIndex + 1]) {
                     this.currentTrackIndex++;
                 } else {
@@ -720,20 +753,16 @@ export default class SoundscapesPlugin extends Plugin {
         this.onSoundscapeChange();
     }
 
-    /**
-     * Seek to a specific spot in the song
-     * @param time
-     */
-    seek(time: number) {
+        seek(time: number) {
         if (this.isMusicCollectionActive()) {
             this.localPlayer.currentTime = time;
+        } else {
+            if (this.player && typeof this.player.seekTo === "function") {
+                this.player.seekTo(time, true);
+            }
         }
     }
 
-    /**
-     * Changes the currently playing song when in My Music mode
-     * @param fileName
-     */
     changeMyMusicTrack(fileName: string) {
         this.currentTrackIndex = this.settings.myMusicIndex.findIndex(
             (song) => song.fileName === fileName
@@ -741,11 +770,9 @@ export default class SoundscapesPlugin extends Plugin {
         this.onSoundscapeChange();
     }
 
-    /**
-     * Turn on shuffle mode. When we toggle it on, reset the shuffle queue.
-     */
     toggleShuffle() {
-        this.settings.playMode = this.settings.playMode === "shuffle" ? "repeat" : "shuffle";
+        this.settings.playMode =
+            this.settings.playMode === "shuffle" ? "repeat" : "shuffle";
         this.saveSettings();
 
         if (this.settings.playMode === "shuffle") {
@@ -756,7 +783,8 @@ export default class SoundscapesPlugin extends Plugin {
     }
 
     toggleRepeat() {
-        this.settings.playMode = this.settings.playMode === "shuffle" ? "repeat" : "shuffle";
+        this.settings.playMode =
+            this.settings.playMode === "shuffle" ? "repeat" : "shuffle";
         this.saveSettings();
 
         if (this.settings.playMode === "shuffle") {
@@ -775,9 +803,6 @@ export default class SoundscapesPlugin extends Plugin {
         this.repeatToggleButton.onclick = () => this.toggleRepeat();
     }
 
-    /**
-     * Either enables or disables song title scrolling on the mini player depending on the user's settings
-     */
     toggleNowPlayingScroll() {
         if (this.settings.scrollSongTitle) {
             this.nowPlayingRoot.removeClass(
@@ -790,10 +815,6 @@ export default class SoundscapesPlugin extends Plugin {
         }
     }
 
-    /**
-     * Changes the currently playing soundscape and triggers other downstream side effects
-     * @param soundscape
-     */
     changeSoundscape(soundscape: string) {
         const prevCollection = this.getActiveMusicCollection();
         if (prevCollection) {
@@ -812,7 +833,10 @@ export default class SoundscapesPlugin extends Plugin {
                 this.settings.myMusicIndex = collection.musicIndex;
                 this.settings.myMusicFolderPath = collection.folderPath;
                 const savedIndex = collection.currentTrackIndex ?? 0;
-                this.currentTrackIndex = savedIndex < this.settings.myMusicIndex.length ? savedIndex : 0;
+                this.currentTrackIndex =
+                    savedIndex < this.settings.myMusicIndex.length
+                        ? savedIndex
+                        : 0;
             }
             this.shuffleQueue = [];
             this.shuffleQueueSpot = 0;
@@ -838,20 +862,11 @@ export default class SoundscapesPlugin extends Plugin {
     //#region Events
     /******************************************************************************************************************/
 
-    /**
-     * Once the player is ready, create the controls and play some music! (or not if autoplay is disabled)
-     */
     onPlayerReady() {
         this.onSoundscapeChange(this.settings.autoplay);
     }
 
-    /**
-     * Update the UI when the state of the video changes
-     */
     onStateChange({ data: state }: { data: PLAYER_STATE }) {
-        const customSoundscape = this.getCurrentCustomSoundscape();
-
-        // Next and Previous buttons only apply when we have a playlist-type soundscape
         if (this.soundscapeType === SOUNDSCAPE_TYPE.STANDARD) {
             this.previousButton.hide();
             this.nextButton.hide();
@@ -862,6 +877,8 @@ export default class SoundscapesPlugin extends Plugin {
             this.repeatToggleButton.show();
         }
 
+        const currentTrackData = this.getCurrentTrackData();
+
         switch (state) {
             case PLAYER_STATE.UNSTARTED:
                 this.playButton.show();
@@ -871,8 +888,7 @@ export default class SoundscapesPlugin extends Plugin {
                 this.playButton.hide();
                 this.pauseButton.show();
                 this.updateLocalPlayerState({
-                    currentTrack:
-                        this.settings.myMusicIndex[this.currentTrackIndex],
+                    currentTrack: currentTrackData,
                     playerState: PLAYER_STATE.PLAYING,
                 });
                 break;
@@ -880,34 +896,41 @@ export default class SoundscapesPlugin extends Plugin {
                 this.playButton.show();
                 this.pauseButton.hide();
                 this.updateLocalPlayerState({
-                    currentTrack:
-                        this.settings.myMusicIndex[this.currentTrackIndex],
+                    currentTrack: currentTrackData,
                     playerState: PLAYER_STATE.PAUSED,
                 });
                 break;
             case PLAYER_STATE.ENDED:
-                if (this.settings.playMode === "repeat" && this.isMusicCollectionActive()) {
-                    // Repeat-one: replay current track without advancing
+                if (this.settings.playMode === "repeat") {
+                    // REPLAY FOR YOUTUBE
+                    if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
+                        this.player?.seekTo(0);
+                        this.player?.playVideo();
+                    } 
+                    // REPLAY FOR LOCAL
+                    else if (this.isMusicCollectionActive()) {
+                        this.localPlayer.currentTime = 0;
+                        this.localPlayer.play();
+                    }
                 } else if (
                     this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM ||
                     this.isMusicCollectionActive()
                 ) {
+                    // If not repeating, go to next
                     this.next();
                 }
-                // For Standard, Loop videos once they end
-                // For Custom, we'll go to the next track (per above logic)
+                break;
                 this.onSoundscapeChange();
         }
     }
 
-    /**
-     * When we change the volume (usually via the slider), update the player volume, the UI, and save the current volume to settings
-     */
     onVolumeChange(e: any) {
         const volume = parseInt(e.target.value);
         this.volumeSlider.value = e.target.value;
-        this.player?.setVolume(volume);
-        this.localPlayer.volume = volume / 100; // Audio object expects 0-1
+        if (this.player && typeof this.player.setVolume === "function") {
+            this.player.setVolume(volume);
+        }
+        this.localPlayer.volume = volume / 100;
 
         this.updateVolumeIcon(volume);
 
@@ -926,16 +949,9 @@ export default class SoundscapesPlugin extends Plugin {
         }
     }
 
-    /**
-     * Play the selected soundscape!
-     *
-     * When in My Music mode, the song content is read from the file and base64ed. This is because electron blocks
-     * local file paths from being used in the Audio element.
-     */
     onSoundscapeChange(autoplay = true) {
-        // Defensive guard against undefined text layout element
         if (!this.nowPlaying) return;
-        
+
         if (this.settings.soundscape.startsWith(`${SOUNDSCAPE_TYPE.CUSTOM}_`)) {
             this.soundscapeType = SOUNDSCAPE_TYPE.CUSTOM;
         } else if (this.isMusicCollectionActive()) {
@@ -946,20 +962,23 @@ export default class SoundscapesPlugin extends Plugin {
 
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
+            const track = customSoundscape?.tracks[this.currentTrackIndex];
 
-            this.player?.loadVideoById({
-                videoId: customSoundscape?.tracks[this.currentTrackIndex].id,
-            });
-            this.nowPlaying.setText(
-                customSoundscape?.tracks[this.currentTrackIndex].name || ""
-            );
-
-            if (!autoplay) {
-                this.player?.pauseVideo();
+            if (track) {
+                if (this.player && typeof this.player.loadVideoById === "function") {
+                    this.player.loadVideoById({ videoId: track.id });
+                    if (!autoplay && typeof this.player.pauseVideo === "function") {
+                        this.player.pauseVideo();
+                    }
+                } else {
+                    console.warn("YouTube Player not ready, retrying...");
+                    setTimeout(() => this.onSoundscapeChange(autoplay), 1000);
+                    return;
+                }
+                this.nowPlaying.setText(track.name || "");
+                this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
+                this.localPlayer.pause();
             }
-
-            this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
-            this.localPlayer.pause(); // Edge Case: When switching from MyMusic to Youtube, the youtube video keeps playing
         } else if (this.isMusicCollectionActive()) {
             const track = this.settings.myMusicIndex[this.currentTrackIndex];
 
@@ -975,40 +994,41 @@ export default class SoundscapesPlugin extends Plugin {
 
                 if (autoplay) {
                     this.localPlayer.play();
-                } else {
-                    // Need to manually send this cause the state won't be set otherwise
-                    this.onStateChange({ data: PLAYER_STATE.PAUSED });
                 }
             } else {
-                // We don't have a track (still indexing or empty index)
-                // Reset the player
                 this.localPlayer.src = "";
                 this.nowPlaying.setText("");
-                this.onStateChange({ data: PLAYER_STATE.PAUSED });
             }
 
             this.statusBarItem.addClass("soundscapesroot--hideyoutube");
-            this.player?.pauseVideo(); // Edge Case: When switching from youtube to MyMusic, the youtube video keeps playing
+            if (this.player && typeof this.player.pauseVideo === "function") {
+                this.player.pauseVideo();
+            }
         } else {
-            this.player?.loadVideoById({
-                videoId: SOUNDSCAPES[this.settings.soundscape].youtubeId,
-            });
-            if (SOUNDSCAPES[this.settings.soundscape].isLiveVideo) {
-                this.player?.seekTo(this.player.getDuration());
+            const ambient = SOUNDSCAPES[this.settings.soundscape];
+            if (ambient) {
+                if (this.player && typeof this.player.loadVideoById === "function") {
+                    this.player.loadVideoById({ videoId: ambient.youtubeId });
+                    if (ambient.isLiveVideo && typeof this.player.seekTo === "function") {
+                        this.player.seekTo(this.player.getDuration());
+                    }
+                    if (!autoplay && typeof this.player.pauseVideo === "function") {
+                        this.player.pauseVideo();
+                    }
+                }
+                this.nowPlaying.setText(ambient.nowPlayingText);
+                this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
+                this.localPlayer.pause();
             }
-            this.nowPlaying.setText(
-                SOUNDSCAPES[this.settings.soundscape].nowPlayingText
-            );
-
-            if (!autoplay) {
-                this.player?.pauseVideo();
-            }
-
-            this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
-            this.localPlayer.pause(); // Edge Case: When switching from MyMusic to Youtube, the youtube video keeps playing
         }
 
-        // Keep miniplayer's soundscape selection button up to date
+        const currentTrackData = this.getCurrentTrackData();
+        this.updateLocalPlayerState({
+            currentTrack: currentTrackData,
+            playerState: autoplay ? PLAYER_STATE.PLAYING : PLAYER_STATE.PAUSED,
+            currentTime: 0,
+        });
+
         this.changeSoundscapeSelect.value = this.settings.soundscape;
         this.saveSettings();
     }
@@ -1021,14 +1041,10 @@ export default class SoundscapesPlugin extends Plugin {
     //#region Settings and State
     /******************************************************************************************************************/
 
-    /**
-     * Load data from disk, stored in data.json in plugin folder
-     */
     async loadSettings() {
         const data = (await this.loadData()) || {};
         this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 
-        // Migrate legacy single My Music to music collections
         if (
             data.myMusicFolderPath &&
             data.myMusicFolderPath.trim() !== "" &&
@@ -1045,12 +1061,10 @@ export default class SoundscapesPlugin extends Plugin {
             this.saveSettings();
         }
 
-        // Reset legacy MY_MUSIC soundscape if no migration happened
         if (this.settings.soundscape === SOUNDSCAPE_TYPE.MY_MUSIC) {
             this.settings.soundscape = "lofi";
         }
 
-        // Fix invalid collection references (e.g. collection was deleted)
         if (
             this.settings.soundscape.startsWith("MUSIC_COLLECTION_") &&
             !this.getActiveMusicCollection()
@@ -1059,9 +1073,6 @@ export default class SoundscapesPlugin extends Plugin {
         }
     }
 
-    /**
-     * Save data to disk, stored in data.json in plugin folder
-     */
     async saveSettings() {
         this.settings.currentTrackIndex = this.currentTrackIndex;
 
@@ -1074,16 +1085,13 @@ export default class SoundscapesPlugin extends Plugin {
         await this.saveData(this.settings);
     }
 
-    /**
-     * Merges the update object with the existing local player state
-     * @param updateObject
-     */
     updateLocalPlayerState(updateObject: LocalPlayerState) {
         this.localPlayerStateObservable.setValue({
             ...this.localPlayerStateObservable.getValue(),
             ...updateObject,
         });
     }
+    ytPollingInterval: NodeJS.Timeout | null = null;
 
     /******************************************************************************************************************/
     //#endregion Settings and State

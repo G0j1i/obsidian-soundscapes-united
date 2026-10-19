@@ -24,10 +24,13 @@ export interface Soundscape {
 export interface Player {
     playVideo(): void;
     pauseVideo(): void;
-    seekTo(position: number): void;
+    seekTo(position: number, allowSeekAhead?: boolean): void;
     getDuration(): number;
+    getCurrentTime(): number;
+    getPlayerState(): number; // Added for the polling sync
     setVolume(volume: Number): void;
     loadVideoById(options: { videoId: String | undefined }): void;
+    destroy(): void; // Keep this so the plugin cleans up audio on unload
 }
 
 export interface LocalMusicFile {

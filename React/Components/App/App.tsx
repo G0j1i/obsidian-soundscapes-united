@@ -4,299 +4,307 @@ import Icon from "../Icon/Icon";
 import Header from "../Header/Header";
 import secondsToMinutesAndSeconds from "../../Utils/secondsToMinutesAndSeconds";
 import { LocalPlayerState } from "src/Types/Interfaces";
-import { PLAYER_STATE, SOUNDSCAPE_TYPE } from "src/Types/Enums";
+import { PLAYER_STATE } from "src/Types/Enums";
 import { SoundscapesPluginSettings } from "src/Settings/Settings";
 import SOUNDSCAPES from "src/Soundscapes";
+import Search from "../Search/Search";
+import { InputModal } from "../Modals/InputModal";
 
-// Define the navigation view context
-type ViewContext = {
-	type: "home" | "ambient" | "youtube" | "local";
-	id: string | null;
-	label: string;
-};
+type ViewContext = { type: "home" | "ambient" | "youtube" | "local"; id: string | null; label: string; };
 
-// Define our unified track row structure
 interface UnifiedTrack {
-	id: string;
-	title: string;
-	artist: string;
-	album: string;
-	duration: number;
-	source: "ambient" | "youtube" | "local";
-	nativeTrackRef: any; // original item pointer to pass back to play functions
+	id: string; title: string; artist: string; album: string; duration: number;
+	source: "ambient" | "youtube" | "local"; nativeTrackRef: any;
 }
 
 const App = () => {
-	const { settingsObservable, localPlayerStateObservable, plugin } = useObsidianPluginContext();
-	const [settings, setSettings] = useState<SoundscapesPluginSettings>(settingsObservable?.getValue());
-	const [localPlayerState, setLocalPlayerState] = useState<LocalPlayerState>(localPlayerStateObservable?.getValue());
+    const { settingsObservable, localPlayerStateObservable, plugin } = useObsidianPluginContext();
+    const [settings, setSettings] = useState<SoundscapesPluginSettings>(settingsObservable?.getValue());
+    const [localPlayerState, setLocalPlayerState] = useState<LocalPlayerState>(localPlayerStateObservable?.getValue());
+    const [activeView, setActiveView] = useState<ViewContext>({ type: "home", id: null, label: "Library" });
+    const [expanded, setExpanded] = useState({ ambient: true, youtube: true, collections: true });
+		const [modalType, setModalType] = useState<"playlist" | "track" | null>(null);
 
-	// Fallback layout style configuration if not yet in user settings
-	const layoutStyle = (settings as any).layoutStyle || "split";
+    useEffect(() => {
+        const unsubSettings = settingsObservable?.onChange((s: any) => setSettings(s));
+        const unsubState = localPlayerStateObservable?.onChange((s: any) => setLocalPlayerState(s));
+        return () => { unsubSettings?.(); unsubState?.(); };
+    }, [settingsObservable, localPlayerStateObservable]);
 
-	// Navigation panel tracking state
-	const [activeView, setActiveView] = useState<ViewContext>({ type: "home", id: null, label: "Library" });
+    useEffect(() => {
+        if (!settings?.soundscape) return;
+        const id = settings.soundscape;
+        if (id.startsWith("CUSTOM_")) {
+            const target = settings.customSoundscapes?.find(p => p.id === id.replace("CUSTOM_", ""));
+            setActiveView({ type: "youtube", id: target?.id || null, label: target?.name || "YouTube Playlist" });
+        } else if (id.startsWith("MUSIC_COLLECTION_")) {
+            const target = settings.musicCollections?.find(c => c.id === id.replace("MUSIC_COLLECTION_", ""));
+            setActiveView({ type: "local", id: target?.id || null, label: target?.name || "Local Music" });
+        } else {
+            const ambient = SOUNDSCAPES[id];
+            setActiveView(ambient ? { type: "ambient", id: id, label: ambient.name } : { type: "home", id: null, label: "Library" });
+        }
+    }, [settings?.soundscape]);
 
-	/**
-	 * Resolves any plugin setting soundscape string to our navigation active view state
-	 */
-	const syncViewFromSoundscapeId = (soundscapeId: string) => {
-		if (!soundscapeId) {
-			setActiveView({ type: "home", id: null, label: "Library" });
-			return;
-		}
+    // 🔥 THE GUARD: show a visible message instead of a blank screen
+    if (!settings) {
+        return (
+            <div className="soundscapes-holistic-container" style={{ padding: 24, color: "var(--fg)" }}>
+                <p>Soundscapes: waiting for settings to load...</p>
+                <p style={{ color: "var(--fg-3)", fontSize: 12 }}>
+                    If this never resolves, your data.json may be corrupted.
+                </p>
+            </div>
+        );
+    }
 
-		if (soundscapeId.startsWith("CUSTOM_")) {
-			const targetId = soundscapeId.replace("CUSTOM_", "");
-			const targetPlaylist = settings.customSoundscapes.find(p => p.id === targetId);
-			setActiveView({
-				type: "youtube",
-				id: targetId,
-				label: targetPlaylist ? targetPlaylist.name : "YouTube Playlist"
-			});
-		} else if (soundscapeId.startsWith("MUSIC_COLLECTION_")) {
-			const targetId = soundscapeId.replace("MUSIC_COLLECTION_", "");
-			const targetCollection = settings.musicCollections?.find(c => c.id === targetId);
-			setActiveView({
-				type: "local",
-				id: targetId,
-				label: targetCollection ? targetCollection.name : "Local Music"
-			});
-		} else {
-			// Built-in ambient tracking
-			const ambient = SOUNDSCAPES[soundscapeId];
-			if (ambient) {
-				setActiveView({ type: "ambient", id: soundscapeId, label: ambient.name });
-			} else {
-				setActiveView({ type: "home", id: null, label: "Library" });
-			}
-		}
-	};
-
-	// Synchronize settings changes from the main application thread
-	useEffect(() => {
-		const unsubscribe = settingsObservable?.onChange((newSettings: SoundscapesPluginSettings) => {
-			setSettings(newSettings);
-		});
-		return () => unsubscribe?.();
-	}, [setSettings]);
-
-	// Listen to player state updates
-	useEffect(() => {
-		const unsubscribe = localPlayerStateObservable?.onChange((newState: LocalPlayerState) => {
-			setLocalPlayerState(newState);
-		});
-		return () => unsubscribe?.();
-	}, [setLocalPlayerState]);
-
-	// Auto-navigate to whichever playlist is currently running on the status bar when loaded or switched
-	useEffect(() => {
-		if (settings?.soundscape) {
-			syncViewFromSoundscapeId(settings.soundscape);
-		}
-	}, [settings?.soundscape]);
-
-	/**
-	 * Compiles list items for the primary navigation panel
-	 */
-	const getNavigationItems = () => {
-		const items: Array<{ type: "ambient" | "youtube" | "local"; id: string; name: string; icon: string }> = [];
-
-		// 1. Append built-in streams
-		Object.values(SOUNDSCAPES).forEach(stream => {
-			items.push({ type: "ambient", id: stream.id, name: stream.name, icon: "radio" });
-		});
-
-		// 2. Append custom user streaming lists
-		if (settings.customSoundscapes && settings.customSoundscapes.length > 0) {
-			settings.customSoundscapes.forEach(list => {
-				items.push({ type: "youtube", id: list.id, name: list.name, icon: "youtube" });
-			});
-		}
-
-		// 3. Append indexed local tracks or directories
-		if (settings.musicCollections && settings.musicCollections.length > 0) {
-			settings.musicCollections.forEach(collection => {
-				items.push({ type: "local", id: collection.id, name: collection.name, icon: "folder" });
-			});
-		} else if (settings.myMusicIndex && settings.myMusicIndex.length > 0) {
-			// Backwards compatibility fallback if flat indexing was previously applied
-			items.push({ type: "local", id: "legacy_root", name: "Local Music Library", icon: "music" });
-		}
-
-		return items;
-	};
-
-	/**
-	 * Computes dynamic dataset row arrays based on the currently selected active navigation item
-	 */
 	const getTracksForView = (): UnifiedTrack[] => {
 		if (activeView.type === "ambient" && activeView.id) {
 			const stream = SOUNDSCAPES[activeView.id];
-			return stream ? [{
-				id: stream.id,
-				title: stream.name,
-				artist: "Ambient Stream",
-				album: "Soundscapes",
-				duration: 0,
-				source: "ambient",
-				nativeTrackRef: stream
-			}] : [];
+			return stream ? [{ id: stream.id, title: stream.name, artist: "Ambient Stream", album: "Soundscapes", duration: 0, source: "ambient", nativeTrackRef: stream }] : [];
 		}
-
 		if (activeView.type === "youtube" && activeView.id) {
-			const targetPlaylist = settings.customSoundscapes.find(p => p.id === activeView.id);
-			if (!targetPlaylist) return [];
-			return targetPlaylist.tracks.map((track, idx) => ({
-				id: `${track.id}_${idx}`,
-				title: track.name,
-				artist: "YouTube Stream",
-				album: targetPlaylist.name,
-				duration: 0,
-				source: "youtube",
-				nativeTrackRef: track
-			}));
-		}
-
+    const target = settings.customSoundscapes?.find(p => p.id === activeView.id);
+    return target ? target.tracks.map((track, idx) => ({
+        id: `${track.id}_${idx}`, title: track.name, artist: "YouTube Stream",
+        album: target.name, duration: 0, source: "youtube", nativeTrackRef: track
+    })) : [];
+}
 		if (activeView.type === "local") {
-			// Gather active scanned files
 			return settings.myMusicIndex.map(song => ({
-				id: song.fullPath,
-				title: song.title || song.fileName,
-				artist: song.artist || "Unknown Artist",
-				album: song.album || "Unknown Album",
-				duration: song.duration || 0,
-				source: "local",
-				nativeTrackRef: song
+				id: song.fullPath, title: song.title || song.fileName, artist: song.artist || "Unknown Artist", album: song.album || "Unknown Album", duration: song.duration || 0, source: "local", nativeTrackRef: song
 			}));
 		}
-
 		return [];
 	};
 
-	/**
-	 * Triggers the correct back-end player actions depending on the source type
-	 */
+		// 1. Replace handleTrackPlay with this:
 	const handleTrackPlay = (track: UnifiedTrack) => {
 		if (!plugin) return;
 
 		if (track.source === "local") {
 			plugin.changeMyMusicTrack(track.nativeTrackRef.fileName);
-		} else if (track.source === "youtube" || track.source === "ambient") {
-			const fullPluginSoundscapeId = track.source === "youtube" 
-				? `CUSTOM_${activeView.id}` 
-				: activeView.id;
+		} else if (track.source === "youtube") {
+			// Set the soundscape to the current playlist
+			plugin.settings.soundscape = `CUSTOM_${activeView.id}`;
+			plugin.saveSettings();
 			
-			if (fullPluginSoundscapeId) {
-				(plugin as any).changeSoundscape?.(fullPluginSoundscapeId);
-			}
+			// Find the exact index of the clicked track
+			const target = settings.customSoundscapes?.find(p => p.id === activeView.id);
+			const trackIdx = target ? target.tracks.findIndex((t: any) => t.id === track.nativeTrackRef.id) : 0;
+			
+			// Set the index and trigger playback
+			plugin.currentTrackIndex = trackIdx >= 0 ? trackIdx : 0;
+			plugin.onSoundscapeChange();
+		} else if (track.source === "ambient") {
+			plugin.changeSoundscape(track.nativeTrackRef.id);
 		}
 	};
 
 	const currentTracks = getTracksForView();
 
-	// Render definitions for the unified Navigation List component
-	const renderNavigationList = () => (
-		<div className="soundscapes-nav-panel">
-			<div className="soundscapes-nav-header">Library Sources</div>
-			{getNavigationItems().map(item => {
-				const isSelected = activeView.type === item.type && activeView.id === item.id;
-				return (
-					<div
-						key={`${item.type}_${item.id}`}
-						className={`soundscapes-nav-item ${isSelected ? "is-active" : ""}`}
-						onClick={() => {
-							const targetSoundscapeId = item.type === "youtube" 
-								? `CUSTOM_${item.id}` 
-								: item.type === "local" 
-									? `MUSIC_COLLECTION_${item.id}` 
-									: item.id;
-							(plugin as any).changeSoundscape?.(targetSoundscapeId);
-						}}
-					>
-						<span className="soundscapes-nav-icon">
-							{item.icon === "youtube" ? "📺" : item.icon === "folder" ? "📁" : item.icon === "radio" ? "📻" : "🎵"}
-						</span>
-						<span className="soundscapes-nav-text">{item.name}</span>
+	const renderSidebar = () => (
+		<aside className="soundscapes-sidebar-aside">
+			<div className="nav-header-title">Library Sources</div>
+			
+			{/* Ambient Group */}
+			<div className="nav-group">
+				<div className="nav-group-header" onClick={() => setExpanded(p => ({ ...p, ambient: !p.ambient }))}>
+					<span className="chevron">{expanded.ambient ? "▼" : "▶"}</span>
+					<Icon name="radio-tower" /> <span>Ambient Streams</span>
+				</div>
+				{expanded.ambient && (
+					<div className="nav-group-items">
+						{Object.values(SOUNDSCAPES).map(s => (
+							<div key={s.id} className={`nav-item ${activeView.type === "ambient" && activeView.id === s.id ? "is-active" : ""}`}
+								onClick={() => (plugin as any).changeSoundscape?.(s.id)}>
+								{s.name}
+							</div>
+						))}
 					</div>
-				);
-			})}
-		</div>
-	);
+				)}
+			</div>
 
-// Render definitions for the dynamic Song track list table
-	const renderTrackTable = () => (
-		<div className="soundscapesmymusic-musiclist">
-			{activeView.type !== "home" && layoutStyle === "drilldown" && (
-				<button 
-					className="soundscapes-back-btn" 
-					onClick={() => setActiveView({ type: "home", id: null, label: "Library" })}
-				>
-					⬅ Back to Library
-				</button>
-			)}
-			<table className="soundscapesmymusic-musiclist-table">
-				<thead>
-					<tr>
-						<th></th>
-						<th>Title</th>
-						<th>Artist</th>
-						<th>Album</th>
-						<th>Time</th>
-					</tr>
-				</thead>
-				<tbody>
-					{currentTracks.map((track) => {
-						const isCurrentLocal = localPlayerState.currentTrack?.fileName === track.nativeTrackRef?.fileName && track.source === "local";
-						const isCurrentStreaming = settings.soundscape === activeView.id || (track.source === "youtube" && settings.soundscape === `CUSTOM_${activeView.id}`);
-						const isThisRowPlaying = isCurrentLocal || isCurrentStreaming;
-
-						return (
-							<tr key={track.id} onDoubleClick={() => handleTrackPlay(track)}>
-								<td>
-									{isThisRowPlaying && localPlayerState.playerState === PLAYER_STATE.PLAYING && (
-										<Icon name="volume-2" />
-									)}
-									{isThisRowPlaying && localPlayerState.playerState === PLAYER_STATE.PAUSED && (
-										<Icon name="volume" />
-									)}
-								</td>
-								<td>{track.title}</td>
-								<td>{track.artist}</td>
-								<td>{track.album}</td>
-								<td>{track.duration > 0 ? secondsToMinutesAndSeconds(track.duration) : "Stream"}</td>
-							</tr>
-						);
-					})}
-					{currentTracks.length === 0 && (
-						<tr>
-							<td colSpan={5} style={{ textAlign: "center", padding: "20px", color: "var(--text-muted)" }}>
-								No tracks found. Select a source or check your configurations.
-							</td>
-						</tr>
+			{/* YouTube Group */}
+			{settings.customSoundscapes?.length >= 0 && (
+				<div className="nav-group">
+					<div className="nav-group-header" onClick={() => setExpanded(p => ({ ...p, youtube: !p.youtube }))}>
+						<span className="chevron">{expanded.youtube ? "▼" : "▶"}</span>
+						<Icon name="fa-brands fa-youtube" aria-hidden="true" /><span>YouTube Playlists</span>
+                        
+						<button 
+						className="nav-add-btn" 
+						onClick={async (e) => { 
+							e.stopPropagation(); 
+							// Access Electron safely without TS imports
+							const { remote } = (window as any).require("electron");
+							const res = await remote.dialog.showOpenDialog({ properties: ["openDirectory"] });
+							
+							if (!res.canceled && res.filePaths.length > 0) {
+								if (plugin && typeof (plugin as any).addMusicCollection === "function") {
+									(plugin as any).addMusicCollection(res.filePaths[0]);
+								}
+							}
+						}}
+						title="Add Local Folder"
+					>+</button>
+					</div>
+					{expanded.youtube && (
+						<div className="nav-group-items">
+							{settings.customSoundscapes.map(list => (
+								<div key={list.id} className={`nav-item ${activeView.type === "youtube" && activeView.id === list.id ? "is-active" : ""}`}
+									onClick={() => (plugin as any).changeSoundscape?.(`CUSTOM_${list.id}`)}>
+									{list.name}
+								</div>
+							))}
+						</div>
 					)}
-				</tbody>
-			</table>
-		</div>
+				</div>
+			)}
+
+			{/* Collections Group */}
+			{settings.musicCollections?.length > 0 && (
+				<div className="nav-group">
+					<div className="nav-group-header" onClick={() => setExpanded(p => ({ ...p, collections: !p.collections }))}>
+						<span className="chevron">{expanded.collections ? "▼" : "▶"}</span>
+						<Icon name="folder" /> <span>Collections</span>
+						<button 
+						className="nav-add-btn" 
+						onClick={async (e) => { 
+							e.stopPropagation(); 
+							// Access Electron safely without TS imports
+							const { remote } = (window as any).require("electron");
+							const res = await remote.dialog.showOpenDialog({ properties: ["openDirectory"] });
+							if (!res.canceled && res.filePaths.length > 0) {
+								if (plugin && typeof (plugin as any).addMusicCollection === "function") {
+									(plugin as any).addMusicCollection(res.filePaths[0]);
+								}
+							}
+						}}
+						title="Add Local Folder"
+					>+</button>
+					</div>
+					{expanded.collections && (
+						<div className="nav-group-items">
+							{settings.musicCollections.map(col => (
+								<div key={col.id} className={`nav-item ${activeView.type === "local" && activeView.id === col.id ? "is-active" : ""}`}
+									onClick={() => (plugin as any).changeSoundscape?.(`MUSIC_COLLECTION_${col.id}`)}>
+									{col.name}
+								</div>
+							))}
+						</div>
+					)}
+				</div>
+			)}
+		</aside>
 	);
 
 	return (
 		<div className="soundscapes-holistic-container">
 			<Header />
-			{layoutStyle === "split" ? (
-				<div className="soundscapes-split-workspace" style={{ display: "flex", height: "100%" }}>
-					<aside className="soundscapes-sidebar-aside" style={{ width: "220px", borderRight: "1px solid var(--background-modifier-border)", overflowY: "auto" }}>
-						{renderNavigationList()}
-					</aside>
-					<main className="soundscapes-main-content" style={{ flex: 1, position: "relative" }}>
-						{renderTrackTable()}
-					</main>
-				</div>
-			) : (
-				<div className="soundscapes-drilldown-workspace" style={{ height: "100%", position: "relative" }}>
-					{activeView.type === "home" ? renderNavigationList() : renderTrackTable()}
-				</div>
-			)}
+			<div className="soundscapes-split-workspace">
+				{renderSidebar()}
+				<main className="soundscapes-main-content">
+					<div className="track-list-header">
+						<h2>{activeView.label || "My Mix"}</h2>
+												{activeView.type === "youtube" && (
+                            <button className="btn-add-track" onClick={() => setModalType("track")}>
+                                + Add Track
+                            </button>
+                        )}
+						<div className="global-search-wrapper">
+							<Search />
+						</div>
+					</div>
+					
+					<div className="track-list">
+						<div className="track-header">
+							<span className="col-idx">#</span>
+							<span className="col-title">Title</span>
+							<span className="col-artist">Artist</span>
+							<span className="col-time">Time</span>
+						</div>
+						{currentTracks.map((track, i) => {
+							// UNIFIED CHECK: Match local by fileName, youtube by id, ambient by name
+							const isCurrentTrack = 
+								(track.source === "local" && localPlayerState.currentTrack?.fileName === track.nativeTrackRef?.fileName) ||
+								(track.source === "youtube" && localPlayerState.currentTrack?.fullPath === track.nativeTrackRef?.id) ||
+								(track.source === "ambient" && localPlayerState.currentTrack?.fileName === track.nativeTrackRef?.name);
+
+							const isPlaying = isCurrentTrack && localPlayerState.playerState === PLAYER_STATE.PLAYING;
+
+							return (
+								<div key={track.id} className="track-row" onClick={() => handleTrackPlay(track)}>
+									<span className="col-idx">
+										{isPlaying ? (
+											<div className="eq-live"><span className="eq-bar"/><span className="eq-bar"/><span className="eq-bar"/></div>
+										) : i + 1}
+									</span>
+									<span className="col-title">{track.title}</span>
+									<span className="col-artist">{track.artist}</span>
+									<span className="col-time">{track.duration > 0 ? secondsToMinutesAndSeconds(track.duration) : "Stream"}</span>
+									
+									{track.source === "youtube" && (
+										<span className="col-delete">
+											<button onClick={(e) => {
+												e.stopPropagation(); // Prevent playing the song
+												if (!plugin) return;
+												const target = plugin.settings.customSoundscapes.find(p => p.id === activeView.id);
+												if (target) {
+													target.tracks = target.tracks.filter(t => t.id !== track.nativeTrackRef.id);
+													plugin.saveSettings();
+													plugin.settingsObservable.setValue(plugin.settings); // Force React update
+												}
+											}}>
+												<Icon name="trash-2" />
+											</button>
+										</span>
+									)}
+								</div>
+							);
+						})}
+					</div>
+				</main>
+			</div>
+        <InputModal 
+            isOpen={modalType === "playlist"}
+            title="Create New Playlist"
+            fields={[{ key: "name", label: "Playlist Name", placeholder: "e.g., Chill Vibes" }]}
+            onClose={() => setModalType(null)}
+            onSubmit={(values) => {
+                if (!plugin) return; // 👈 ADD THIS GUARD
+                const newPlaylist = {
+                    id: crypto.randomUUID(),
+                    name: values.name,
+                    tracks: []
+                };
+                plugin.settings.customSoundscapes.push(newPlaylist);
+                plugin.saveSettings();
+                plugin.populateChangeSoundscapeButton();
+            }}
+        />
+
+        <InputModal 
+            isOpen={modalType === "track"}
+            title={`Add Track to ${activeView.label}`}
+            fields={[
+                { key: "name", label: "Track Name", placeholder: "e.g., Song Title" },
+                { key: "id", label: "YouTube Video ID", placeholder: "e.g., dQw4w9WgXcQ" }
+            ]}
+            onClose={() => setModalType(null)}
+            onSubmit={(values) => {
+                if (!plugin) return; // 👈 ADD THIS GUARD
+                const targetPlaylist = plugin.settings.customSoundscapes.find(p => p.id === activeView.id);
+                if (targetPlaylist) {
+                    targetPlaylist.tracks.push({
+                        name: values.name,
+                        id: values.id
+                    });
+                    plugin.saveSettings();
+                    plugin.populateChangeSoundscapeButton();
+                }
+            }}
+        />
 		</div>
 	);
 };
