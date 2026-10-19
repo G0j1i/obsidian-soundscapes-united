@@ -22,6 +22,26 @@ import {
     SoundscapesSettingsTab,
 } from "src/Settings/Settings";
 import createShuffleQueue from "src/Utils/createShuffleQueue";
+import { exec } from "child_process";
+
+function getYtdlStreamUrl(videoUrl: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        // -g: Get URL, -f bestaudio: Best audio-only format
+        exec(`yt-dlp -g -f bestaudio "${videoUrl}"`, (error, stdout, stderr) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+            // yt-dlp sometimes outputs multiple lines (like warnings). We grab the first URL.
+            const url = stdout.trim().split('\n').find(line => line.startsWith('http'));
+            if (url) {
+                resolve(url);
+            } else {
+                reject(new Error("No URL returned from yt-dlp"));
+            }
+        });
+    });
+}
 
 if (process.env.NODE_ENV === "development") {
     new EventSource("http://127.0.0.1:8000/esbuild").addEventListener(
@@ -650,25 +670,28 @@ export default class SoundscapesPlugin extends Plugin {
     /******************************************************************************************************************/
 
     play() {
-        if (this.isMusicCollectionActive()) {
-            if (this.localPlayer.src === location.href && this.settings.myMusicIndex.length > 0) {
-                this.currentTrackIndex = 0;
-                this.onSoundscapeChange(true);
+        if (this.isMusicCollectionActive() || this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
+            const customSoundscape = this.getCurrentCustomSoundscape();
+            if (customSoundscape?.isNativePlaylist) {
+                this.player?.playVideo();
             } else {
                 this.localPlayer.play();
             }
         } else {
             this.player?.playVideo();
-            this.onStateChange({ data: PLAYER_STATE.PLAYING });
         }
     }
 
     pause() {
-        if (this.isMusicCollectionActive()) {
-            this.localPlayer.pause();
+        if (this.isMusicCollectionActive() || this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
+            const customSoundscape = this.getCurrentCustomSoundscape();
+            if (customSoundscape?.isNativePlaylist) {
+                this.player?.pauseVideo();
+            } else {
+                this.localPlayer.pause();
+            }
         } else {
             this.player?.pauseVideo();
-            this.onStateChange({ data: PLAYER_STATE.PAUSED });
         }
     }
 
@@ -790,9 +813,16 @@ export default class SoundscapesPlugin extends Plugin {
         this.onSoundscapeChange();
     }
 
-        seek(time: number) {
-        if (this.isMusicCollectionActive()) {
-            this.localPlayer.currentTime = time;
+    seek(time: number) {
+        if (this.isMusicCollectionActive() || this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
+            const customSoundscape = this.getCurrentCustomSoundscape();
+            if (customSoundscape?.isNativePlaylist) {
+                if (this.player && typeof this.player.seekTo === "function") {
+                    this.player.seekTo(time, true);
+                }
+            } else {
+                this.localPlayer.currentTime = time;
+            }
         } else {
             if (this.player && typeof this.player.seekTo === "function") {
                 this.player.seekTo(time, true);
@@ -985,7 +1015,7 @@ export default class SoundscapesPlugin extends Plugin {
         }
     }
 
-    onSoundscapeChange(autoplay = true) {
+    async onSoundscapeChange(autoplay = true) {
         if (!this.nowPlaying) return;
 
         if (this.settings.soundscape.startsWith(`${SOUNDSCAPE_TYPE.CUSTOM}_`)) {
@@ -1001,9 +1031,8 @@ export default class SoundscapesPlugin extends Plugin {
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
             
-            // 🔥 Native Playlist Playback
+            // 1. Native Playlist Playback (Keeps using the IFrame)
             if (customSoundscape?.isNativePlaylist && customSoundscape.nativePlaylistId) {
-                // 🔥 Assign to a local constant so TS knows it's a string
                 const playlistId = customSoundscape.nativePlaylistId; 
                 
                 if (this.player && typeof this.player.loadPlaylist === "function") {
@@ -1017,27 +1046,45 @@ export default class SoundscapesPlugin extends Plugin {
                     }, 50);
                 }
                 this.nowPlaying.setText(customSoundscape.name || "Native Playlist");
-                this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
+                this.statusBarItem.removeClass("soundscapesroot--hideyoutube"); // Show IFrame
                 this.localPlayer.pause();
-            } else {
-                // Standard Custom Playlist
+            } 
+            // 2. Standard Custom Playlist (Uses yt-dlp + localPlayer)
+            else {
                 const track = customSoundscape?.tracks[this.currentTrackIndex];
                 if (track) {
-                    if (this.player && typeof this.player.loadVideoById === "function") {
-                        setTimeout(() => {
-                            this.player.loadVideoById({ videoId: track.id });
-                            if (!autoplay) this.player.pauseVideo();
-                        }, 50);
-                    } else {
-                        console.warn("YouTube Player not ready yet.");
-                        return;
-                    }
                     this.nowPlaying.setText(track.name || "");
-                    this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
-                    this.localPlayer.pause();
+                    this.statusBarItem.addClass("soundscapesroot--hideyoutube"); // Hide IFrame
+                    
+                    if (this.player && typeof this.player.pauseVideo === "function") {
+                        this.player.pauseVideo();
+                    }
+
+                    try {
+                        // Extract direct stream URL using yt-dlp
+                        const streamUrl = await getYtdlStreamUrl(`https://www.youtube.com/watch?v=${track.id}`);
+                        this.localPlayer.src = streamUrl;
+                        
+                        if (autoplay) {
+                            this.localPlayer.play();
+                        }
+                        } catch (e: any) {
+                        console.error("yt-dlp extraction failed:", e);
+                        
+                        // Check if the error is because yt-dlp is missing
+                        if (e.message && (e.message.includes("not recognized") || e.message.includes("not found") || e.code === 127)) {
+                            new Notice("yt-dlp is not installed! Please install it to play YouTube tracks.", 10000);
+                            this.localPlayer.pause(); // Stop the player
+                            // Do NOT call this.next() here, or it will loop forever
+                        } else {
+                            new Notice("Failed to extract video. It might be region-locked. Skipping...");
+                            setTimeout(() => this.next(), 1500);
+                        }
+                    }
                 }
             }
         } else if (this.isMusicCollectionActive()) {
+            // Local Music Logic
             const track = this.settings.myMusicIndex[this.currentTrackIndex];
 
             if (track) {
@@ -1063,6 +1110,7 @@ export default class SoundscapesPlugin extends Plugin {
                 this.player.pauseVideo();
             }
         } else {
+            // Ambient Streams Logic
             const ambient = SOUNDSCAPES[this.settings.soundscape];
             if (ambient) {
                 if (this.player && typeof this.player.loadVideoById === "function") {

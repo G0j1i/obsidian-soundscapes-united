@@ -44,10 +44,8 @@ const Header = () => {
 	useEffect(() => {
 		const ytPlayerElement = document.getElementById("player");
 		const container = videoContainerRef.current;
-		
 		if (!ytPlayerElement || !container) return;
 
-		// 1. Hide if local music
 		if (isLocalActive || !hasTrack) {
 			ytPlayerElement.style.setProperty("display", "none", "important");
 			if (ytPlayerElement.parentElement === container && plugin) {
@@ -56,27 +54,26 @@ const Header = () => {
 			return;
 		}
 
-		// 🔥 2. ADD THE NATIVE PLAYLIST CHECK HERE
+		const soundscapeId = plugin?.settings.soundscape || "";
 		const currentPlaylist = plugin?.settings.customSoundscapes?.find(
-			p => p.id === plugin?.settings.soundscape.replace("CUSTOM_", "")
+			p => p.id === soundscapeId.replace("CUSTOM_", "")
 		);
+		const isNativeMix = currentPlaylist?.isNativePlaylist === true;
+		const isAmbient = !soundscapeId.startsWith("CUSTOM_") && !soundscapeId.startsWith("MUSIC_COLLECTION_");
 
-		if (currentPlaylist?.isNativePlaylist) {
-			// Keep the IFrame in the status bar. Just hide it so it doesn't float over the UI.
+		// Hide IFrame for Standard Playlists (they use yt-dlp + localPlayer)
+		if (!isNativeMix && !isAmbient) {
+			ytPlayerElement.style.setProperty("display", "none", "important");
 			if (ytPlayerElement.parentElement === container && plugin) {
 				(plugin as any).resetPlayerToStatusBar();
 			}
-			ytPlayerElement.style.setProperty("display", "none", "important");
 			return;
 		}
-		// 🔥 END OF NATIVE CHECK
 
-		// 3. Move the IFrame into the React header for standard playlists
 		if (ytPlayerElement.parentElement !== container) {
 			container.appendChild(ytPlayerElement);
 		}
 
-		// 4. Apply styles
 		ytPlayerElement.style.setProperty("display", "block", "important");
 		ytPlayerElement.style.setProperty("position", "absolute", "important");
 		ytPlayerElement.style.setProperty("top", "0", "important");
@@ -91,17 +88,38 @@ const Header = () => {
 				(plugin as any).resetPlayerToStatusBar();
 			}
 		};
-	}, [isLocalActive, hasTrack]); 
+	}, [hasTrack, isLocalActive, plugin?.settings.soundscape]);
 
 	return (
 		<div className="soundscapesmymusic-header">
-			{/* 1. The Video (if YouTube) */}
-			{!isLocalActive && hasTrack && (
+ 
+			{/* 1. The Artwork / Video */}
+			{hasTrack && !isLocalActive && (
 				<div className="soundscapes-video-wrapper" style={{ width: `${videoWidth}px` }}>
-					<div 
-						ref={videoContainerRef} 
-						className="soundscapes-video-placeholder"
-					/>
+					{(() => {
+						const soundscapeId = plugin?.settings.soundscape || "";
+						const isNative = plugin?.settings.customSoundscapes?.find(
+							p => p.id === soundscapeId.replace("CUSTOM_", "")
+						)?.isNativePlaylist;
+						const isAmbient = !soundscapeId.startsWith("CUSTOM_") && !soundscapeId.startsWith("MUSIC_COLLECTION_");
+
+						if (isNative || isAmbient) {
+							return <div ref={videoContainerRef} className="soundscapes-video-placeholder" />;
+						}
+
+						return (
+							<div 
+								className="soundscapes-video-placeholder" 
+								style={{ 
+									backgroundImage: `url(https://img.youtube.com/vi/${localPlayerState.currentTrack?.fullPath}/hqdefault.jpg)`, 
+									backgroundSize: 'cover', 
+									backgroundPosition: 'center' 
+								}}
+							>
+								<div ref={videoContainerRef} style={{ width: "100%", height: "100%" }} />
+							</div>
+						);
+					})()}
 					<div className="soundscapes-resize-handle" onMouseDown={handleResize} />
 				</div>
 			)}
