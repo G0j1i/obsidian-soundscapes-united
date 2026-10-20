@@ -75,3 +75,21 @@ If you run into any issues with this plugin, please [open an issue](https://gith
 # Leave a Tip
 
 <a href="https://www.buymeacoffee.com/andrewmcgivery" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
+# ⚠️ Beta Notice (v1.0.0-beta.1)
+
+This plugin is in **beta**. Core features are stable, but the YouTube player is still being refined.
+
+### What works reliably
+- Local music library
+- Ambient streams
+- YouTube playlists (static import and native mixes via IFrame)
+- In-app playlist management
+- Search (global and in-playlist)
+
+### What's experimental
+- **`yt-dlp` fallback** for embedding-blocked videos (some major-label tracks). 
+  - Requires [yt-dlp](https://github.com/yt-dlp/yt-dlp) to be installed and on your system PATH.
+  - Works, but transitions between the IFrame player and the `yt-dlp` audio player can occasionally glitch.
+
+If `yt-dlp` is not installed, blocked videos will simply be skipped with a notice. Everything else works normally.
