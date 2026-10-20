@@ -60,4 +60,5 @@ export interface LocalPlayerState {
     currentTrack?: LocalMusicFile | undefined;
     playerState?: PLAYER_STATE | undefined;
     currentTime?: number | undefined;
+    isYtdlFallback?: boolean;
 }

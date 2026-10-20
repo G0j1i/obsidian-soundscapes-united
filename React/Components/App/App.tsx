@@ -82,8 +82,8 @@ const App = () => {
     const [settings, setSettings] = useState<SoundscapesPluginSettings>(settingsObservable?.getValue());
     const [localPlayerState, setLocalPlayerState] = useState<LocalPlayerState>(localPlayerStateObservable?.getValue());
     const [activeView, setActiveView] = useState<ViewContext>({ type: "home", id: null, label: "Library" });
-    const [expanded, setExpanded] = useState({ ambient: true, youtube: true, collections: true });
-	const [modalType, setModalType] = useState<"playlist" | "track" | "import" | null>(null);
+    const [expanded, setExpanded] = useState({ ambient: false, youtube: false, collections: false });
+	  const [modalType, setModalType] = useState<"playlist" | "track" | "import" | null>(null);
 
     useEffect(() => {
         const unsubSettings = settingsObservable?.onChange((s: any) => setSettings(s));

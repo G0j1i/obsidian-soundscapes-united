@@ -26,13 +26,13 @@ import { exec } from "child_process";
 
 function getYtdlStreamUrl(videoUrl: string): Promise<string> {
     return new Promise((resolve, reject) => {
-        // -g: Get URL, -f bestaudio: Best audio-only format
-        exec(`yt-dlp -g -f bestaudio "${videoUrl}"`, (error, stdout, stderr) => {
+        exec(`yt-dlp -g -f "ba/b" "${videoUrl}"`, (error, stdout, stderr) => {
             if (error) {
+                console.error("yt-dlp stderr:", stderr);
                 reject(error);
                 return;
             }
-            // yt-dlp sometimes outputs multiple lines (like warnings). We grab the first URL.
+            
             const url = stdout.trim().split('\n').find(line => line.startsWith('http'));
             if (url) {
                 resolve(url);
@@ -77,7 +77,7 @@ export default class SoundscapesPlugin extends Plugin {
     reindexTimer: NodeJS.Timeout | null = null;
     shuffleQueue: number[] = [];
     shuffleQueueSpot: number = 0;
-    ytPollingInterval: NodeJS.Timeout | null = null;
+    ytPollingInterval: NodeJS.Timeout | null = null;    
 
     // Put this anywhere in the class
     async addMusicCollection(folderPath: string) {
@@ -107,6 +107,10 @@ export default class SoundscapesPlugin extends Plugin {
             // Let the old status bar CSS handle the display
         }
     }
+
+    private useYtdlFallback: boolean = false;
+    private playTimeout: NodeJS.Timeout | null = null;
+    private currentPlayingId: string | null = null;
 
     async onload() {
         await this.loadSettings();
@@ -442,17 +446,33 @@ export default class SoundscapesPlugin extends Plugin {
                     controls: 0,
                     enablejsapi: 1, // CRITICAL: Allows reliable API control
                 },
-                events: {
+                                events: {
                     onReady: this.onPlayerReady.bind(this),
                     onStateChange: (e: any) => {
                         if (!this.isMusicCollectionActive()) {
                             this.onStateChange.bind(this)(e);
                         }
                     },
+                    onError: (e: any) => {
+                        console.warn("YouTube Player Error:", e.data);
+                        
+                        // 🔥 FIX: Don't trigger fallback if we are already in fallback
+                        if (this.useYtdlFallback) return;
+
+                        if (e.data === 101 || e.data === 150) {
+                            this.useYtdlFallback = true;
+                            this.updateLocalPlayerState({ isYtdlFallback: true });
+                            setTimeout(() => this.onSoundscapeChange(true), 100);
+                        } else if (e.data === 100) {
+                            new Notice("Video unavailable. Skipping...");
+                            setTimeout(() => this.next(), 1000);
+                        }
+                    }
                 },
             });
 
             this.ytPollingInterval = setInterval(() => {
+                if (this.useYtdlFallback) return;
                 if (this.player && typeof this.player.getCurrentTime === "function" && !this.isMusicCollectionActive()) {
                     try {
                         const currentTime = this.player.getCurrentTime() || 0;
@@ -696,6 +716,7 @@ export default class SoundscapesPlugin extends Plugin {
     }
 
    previous() {
+        this.useYtdlFallback = false;
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
             const total = customSoundscape?.tracks.length || 0;
@@ -754,6 +775,7 @@ export default class SoundscapesPlugin extends Plugin {
     }
 
     next() {
+        this.useYtdlFallback = false;
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
             const total = customSoundscape?.tracks.length || 0;
@@ -831,9 +853,7 @@ export default class SoundscapesPlugin extends Plugin {
     }
 
     changeMyMusicTrack(fileName: string) {
-        this.currentTrackIndex = this.settings.myMusicIndex.findIndex(
-            (song) => song.fileName === fileName
-        );
+        this.useYtdlFallback = false;
         this.onSoundscapeChange();
     }
 
@@ -1018,6 +1038,11 @@ export default class SoundscapesPlugin extends Plugin {
     async onSoundscapeChange(autoplay = true) {
         if (!this.nowPlaying) return;
 
+        if (this.playTimeout) {
+            clearTimeout(this.playTimeout);
+            this.playTimeout = null;
+        }
+
         if (this.settings.soundscape.startsWith(`${SOUNDSCAPE_TYPE.CUSTOM}_`)) {
             this.soundscapeType = SOUNDSCAPE_TYPE.CUSTOM;
         } else if (this.isMusicCollectionActive()) {
@@ -1027,58 +1052,67 @@ export default class SoundscapesPlugin extends Plugin {
         }
 
         const currentTrackData = this.getCurrentTrackData();
+        
+        // Reset fallback when track changes
+        if (currentTrackData && currentTrackData.fullPath !== this.currentPlayingId) {
+            this.currentPlayingId = currentTrackData.fullPath;
+            this.useYtdlFallback = false;
+        }
 
         if (this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM) {
             const customSoundscape = this.getCurrentCustomSoundscape();
             
-            // 1. Native Playlist Playback (Keeps using the IFrame)
+            // 1. Native Playlist Playback
             if (customSoundscape?.isNativePlaylist && customSoundscape.nativePlaylistId) {
                 const playlistId = customSoundscape.nativePlaylistId; 
+                this.updateLocalPlayerState({ isYtdlFallback: false });
                 
                 if (this.player && typeof this.player.loadPlaylist === "function") {
-                    setTimeout(() => {
+                    this.playTimeout = setTimeout(() => {
                         this.player.loadPlaylist({
                             list: playlistId,
                             listType: "playlist",
                             index: 0
                         });
                         if (!autoplay) this.player.pauseVideo();
-                    }, 50);
+                    }, 1000); 
                 }
                 this.nowPlaying.setText(customSoundscape.name || "Native Playlist");
-                this.statusBarItem.removeClass("soundscapesroot--hideyoutube"); // Show IFrame
+                this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
                 this.localPlayer.pause();
             } 
-            // 2. Standard Custom Playlist (Uses yt-dlp + localPlayer)
+            // 2. Standard Custom Playlist
             else {
                 const track = customSoundscape?.tracks[this.currentTrackIndex];
                 if (track) {
                     this.nowPlaying.setText(track.name || "");
-                    this.statusBarItem.addClass("soundscapesroot--hideyoutube"); // Hide IFrame
                     
-                    if (this.player && typeof this.player.pauseVideo === "function") {
-                        this.player.pauseVideo();
-                    }
-
-                    try {
-                        // Extract direct stream URL using yt-dlp
-                        const streamUrl = await getYtdlStreamUrl(`https://www.youtube.com/watch?v=${track.id}`);
-                        this.localPlayer.src = streamUrl;
+                    if (this.useYtdlFallback) {
+                        // yt-dlp fallback
+                        this.statusBarItem.addClass("soundscapesroot--hideyoutube");
+                        if (this.player && typeof this.player.pauseVideo === "function") this.player.pauseVideo();
                         
-                        if (autoplay) {
-                            this.localPlayer.play();
-                        }
+                        try {
+                            const streamUrl = await getYtdlStreamUrl(`https://www.youtube.com/watch?v=${track.id}`);
+                            this.localPlayer.src = streamUrl;
+                            if (autoplay) this.localPlayer.play();
+                            this.updateLocalPlayerState({ isYtdlFallback: true });
                         } catch (e: any) {
-                        console.error("yt-dlp extraction failed:", e);
-                        
-                        // Check if the error is because yt-dlp is missing
-                        if (e.message && (e.message.includes("not recognized") || e.message.includes("not found") || e.code === 127)) {
-                            new Notice("yt-dlp is not installed! Please install it to play YouTube tracks.", 10000);
-                            this.localPlayer.pause(); // Stop the player
-                            // Do NOT call this.next() here, or it will loop forever
-                        } else {
-                            new Notice("Failed to extract video. It might be region-locked. Skipping...");
+                            console.error("yt-dlp extraction failed:", e);
+                            new Notice("Failed to extract video.");
                             setTimeout(() => this.next(), 1500);
+                        }
+                    } else {
+                        // Default IFrame
+                        this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
+                        this.localPlayer.pause();
+                        this.updateLocalPlayerState({ isYtdlFallback: false });
+                        
+                        if (this.player && typeof this.player.loadVideoById === "function") {
+                            this.playTimeout = setTimeout(() => {
+                                this.player.loadVideoById({ videoId: track.id });
+                                if (!autoplay) this.player.pauseVideo();
+                            }, 1000);
                         }
                     }
                 }
@@ -1096,6 +1130,7 @@ export default class SoundscapesPlugin extends Plugin {
                 this.localPlayer.src = `data:${getMimeType(ext)};base64,${base64Data}`;
 
                 this.nowPlaying.setText(`${track.title} - ${track.artist}`);
+                this.updateLocalPlayerState({ isYtdlFallback: false });
 
                 if (autoplay) {
                     this.localPlayer.play();
@@ -1113,14 +1148,17 @@ export default class SoundscapesPlugin extends Plugin {
             // Ambient Streams Logic
             const ambient = SOUNDSCAPES[this.settings.soundscape];
             if (ambient) {
+                this.updateLocalPlayerState({ isYtdlFallback: false });
                 if (this.player && typeof this.player.loadVideoById === "function") {
-                    this.player.loadVideoById({ videoId: ambient.youtubeId });
-                    if (ambient.isLiveVideo && typeof this.player.seekTo === "function") {
-                        this.player.seekTo(this.player.getDuration());
-                    }
-                    if (!autoplay && typeof this.player.pauseVideo === "function") {
-                        this.player.pauseVideo();
-                    }
+                    this.playTimeout = setTimeout(() => {
+                        this.player.loadVideoById({ videoId: ambient.youtubeId });
+                        if (ambient.isLiveVideo && typeof this.player.seekTo === "function") {
+                            this.player.seekTo(this.player.getDuration());
+                        }
+                        if (!autoplay && typeof this.player.pauseVideo === "function") {
+                            this.player.pauseVideo();
+                        }
+                    }, 1000);
                 }
                 this.nowPlaying.setText(ambient.nowPlayingText);
                 this.statusBarItem.removeClass("soundscapesroot--hideyoutube");

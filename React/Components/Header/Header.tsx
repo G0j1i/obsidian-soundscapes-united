@@ -48,9 +48,7 @@ const Header = () => {
 
 		if (isLocalActive || !hasTrack) {
 			ytPlayerElement.style.setProperty("display", "none", "important");
-			if (ytPlayerElement.parentElement === container && plugin) {
-				(plugin as any).resetPlayerToStatusBar();
-			}
+			if (plugin) (plugin as any).resetPlayerToStatusBar();
 			return;
 		}
 
@@ -60,9 +58,10 @@ const Header = () => {
 		);
 		const isNativeMix = currentPlaylist?.isNativePlaylist === true;
 		const isAmbient = !soundscapeId.startsWith("CUSTOM_") && !soundscapeId.startsWith("MUSIC_COLLECTION_");
+		const isFallback = localPlayerState.isYtdlFallback;
 
-		// Hide IFrame for Standard Playlists (they use yt-dlp + localPlayer)
-		if (!isNativeMix && !isAmbient) {
+		// 🔥 FIX: If it's a fallback, hide the IFrame immediately and return
+		if (isFallback && !isNativeMix && !isAmbient) {
 			ytPlayerElement.style.setProperty("display", "none", "important");
 			if (ytPlayerElement.parentElement === container && plugin) {
 				(plugin as any).resetPlayerToStatusBar();
@@ -88,7 +87,7 @@ const Header = () => {
 				(plugin as any).resetPlayerToStatusBar();
 			}
 		};
-	}, [hasTrack, isLocalActive, plugin?.settings.soundscape]);
+	}, [hasTrack, isLocalActive, plugin?.settings.soundscape, localPlayerState.isYtdlFallback]);
 
 	return (
 		<div className="soundscapesmymusic-header">
@@ -96,30 +95,15 @@ const Header = () => {
 			{/* 1. The Artwork / Video */}
 			{hasTrack && !isLocalActive && (
 				<div className="soundscapes-video-wrapper" style={{ width: `${videoWidth}px` }}>
-					{(() => {
-						const soundscapeId = plugin?.settings.soundscape || "";
-						const isNative = plugin?.settings.customSoundscapes?.find(
-							p => p.id === soundscapeId.replace("CUSTOM_", "")
-						)?.isNativePlaylist;
-						const isAmbient = !soundscapeId.startsWith("CUSTOM_") && !soundscapeId.startsWith("MUSIC_COLLECTION_");
-
-						if (isNative || isAmbient) {
-							return <div ref={videoContainerRef} className="soundscapes-video-placeholder" />;
-						}
-
-						return (
-							<div 
-								className="soundscapes-video-placeholder" 
-								style={{ 
-									backgroundImage: `url(https://img.youtube.com/vi/${localPlayerState.currentTrack?.fullPath}/hqdefault.jpg)`, 
-									backgroundSize: 'cover', 
-									backgroundPosition: 'center' 
-								}}
-							>
-								<div ref={videoContainerRef} style={{ width: "100%", height: "100%" }} />
-							</div>
-						);
-					})()}
+					<div 
+						ref={videoContainerRef} 
+						className="soundscapes-video-placeholder"
+						style={{ 
+							backgroundImage: localPlayerState.isYtdlFallback ? `url(https://img.youtube.com/vi/${localPlayerState.currentTrack?.fullPath}/hqdefault.jpg)` : 'none',
+							backgroundSize: 'cover', 
+							backgroundPosition: 'center' 
+						}}
+					/>
 					<div className="soundscapes-resize-handle" onMouseDown={handleResize} />
 				</div>
 			)}
@@ -167,6 +151,23 @@ const Header = () => {
 				<button className={`control-btn ${plugin?.settings.playMode === "shuffle" ? "active" : ""}`} onClick={() => plugin?.toggleShuffle()}>
 					<Icon name={plugin?.settings.playMode === "shuffle" ? "shuffle" : "repeat"} />
 				</button>
+				{/* Manual Fallback Button */}
+				{!isLocalActive && !plugin?.settings.soundscape?.startsWith("MUSIC_COLLECTION_") && (
+					<button 
+						className="control-btn" 
+						onClick={() => {
+							if (plugin) {
+								(plugin as any).useYtdlFallback = true;
+								plugin.updateLocalPlayerState({ isYtdlFallback: true });
+								(plugin as any).onSoundscapeChange(true);
+							}
+						}}
+						title="Force Audio Fallback"
+						style={{ opacity: 0.5 }}
+					>
+						<Icon name="headphones" />
+					</button>
+				)}
 				<button className="control-btn" onClick={() => plugin?.previous()}><Icon name="skip-back" /></button>
 				<button className="control-btn large" onClick={() => localPlayerState.playerState === PLAYER_STATE.PLAYING ? plugin?.pause() : plugin?.play()}>
 					{localPlayerState.playerState === PLAYER_STATE.PLAYING ? <Icon name="pause" /> : <Icon name="play" />}
