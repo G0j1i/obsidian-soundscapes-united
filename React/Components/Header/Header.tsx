@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useState, useRef } from "react";
 import { useObsidianPluginContext } from "../../Context/ObsidianPluginContext";
 import Icon from "../Icon/Icon";
 import secondsToMinutesAndSeconds from "../../Utils/secondsToMinutesAndSeconds";
@@ -41,7 +41,7 @@ const Header = () => {
 		return () => unsubscribe?.();
 	}, [localPlayerStateObservable]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const ytPlayerElement = document.getElementById("player");
 		const container = videoContainerRef.current;
 		if (!ytPlayerElement || !container) return;
@@ -49,23 +49,6 @@ const Header = () => {
 		if (isLocalActive || !hasTrack) {
 			ytPlayerElement.style.setProperty("display", "none", "important");
 			if (plugin) (plugin as any).resetPlayerToStatusBar();
-			return;
-		}
-
-		const soundscapeId = plugin?.settings.soundscape || "";
-		const currentPlaylist = plugin?.settings.customSoundscapes?.find(
-			p => p.id === soundscapeId.replace("CUSTOM_", "")
-		);
-		const isNativeMix = currentPlaylist?.isNativePlaylist === true;
-		const isAmbient = !soundscapeId.startsWith("CUSTOM_") && !soundscapeId.startsWith("MUSIC_COLLECTION_");
-		const isFallback = localPlayerState.isYtdlFallback;
-
-		// 🔥 FIX: If it's a fallback, hide the IFrame immediately and return
-		if (isFallback && !isNativeMix && !isAmbient) {
-			ytPlayerElement.style.setProperty("display", "none", "important");
-			if (ytPlayerElement.parentElement === container && plugin) {
-				(plugin as any).resetPlayerToStatusBar();
-			}
 			return;
 		}
 
@@ -81,13 +64,24 @@ const Header = () => {
 		ytPlayerElement.style.setProperty("height", "100%", "important");
 		ytPlayerElement.style.setProperty("opacity", "1", "important");
 		ytPlayerElement.style.setProperty("z-index", "1", "important");
+	}, [hasTrack, isLocalActive, plugin?.settings.soundscape]);
 
+	useEffect(() => {
 		return () => {
-			if (ytPlayerElement && ytPlayerElement.parentElement === container && plugin) {
-				(plugin as any).resetPlayerToStatusBar();
-			}
+			if (plugin) (plugin as any).resetPlayerToStatusBar();
 		};
-	}, [hasTrack, isLocalActive, plugin?.settings.soundscape, localPlayerState.isYtdlFallback]);
+	}, [plugin]);
+
+	useLayoutEffect(() => {
+		const ytPlayerElement = document.getElementById("player");
+		if (!ytPlayerElement) return;
+
+		if (isLocalActive || !hasTrack || localPlayerState.isYtdlFallback) {
+			ytPlayerElement.style.setProperty("display", "none", "important");
+		} else {
+			ytPlayerElement.style.setProperty("display", "block", "important");
+		}
+	}, [hasTrack, isLocalActive, localPlayerState.isYtdlFallback]);
 
 	return (
 		<div className="soundscapesmymusic-header">
@@ -148,9 +142,24 @@ const Header = () => {
 
 			{/* 4. The Controls */}
 			<div className="soundscapes-player-controls">
-				<button className={`control-btn ${plugin?.settings.playMode === "shuffle" ? "active" : ""}`} onClick={() => plugin?.toggleShuffle()}>
-					<Icon name={plugin?.settings.playMode === "shuffle" ? "shuffle" : "repeat"} />
+				{/* 🔥 Shuffle Button (Highlights when Shuffle is ON) */}
+				<button 
+					className={`control-btn ${plugin?.settings.playMode === "shuffle" ? "active" : ""}`} 
+					onClick={() => plugin?.toggleShuffle()}
+					title="Shuffle"
+				>
+					<Icon name="shuffle" />
 				</button>
+
+				{/* 🔥 Repeat Button (Highlights when Repeat is ON) */}
+				<button 
+					className={`control-btn ${plugin?.settings.playMode === "repeat" ? "active" : ""}`} 
+					onClick={() => plugin?.toggleRepeat()}
+					title="Repeat"
+				>
+					<Icon name="repeat" />
+				</button>
+
 				{/* Manual Fallback Button */}
 				{!isLocalActive && !plugin?.settings.soundscape?.startsWith("MUSIC_COLLECTION_") && (
 					<button 
@@ -168,11 +177,19 @@ const Header = () => {
 						<Icon name="headphones" />
 					</button>
 				)}
-				<button className="control-btn" onClick={() => plugin?.previous()}><Icon name="skip-back" /></button>
+				
+				<button className="control-btn" onClick={() => plugin?.previous()}>
+					<Icon name="skip-back" />
+				</button>
+				
 				<button className="control-btn large" onClick={() => localPlayerState.playerState === PLAYER_STATE.PLAYING ? plugin?.pause() : plugin?.play()}>
 					{localPlayerState.playerState === PLAYER_STATE.PLAYING ? <Icon name="pause" /> : <Icon name="play" />}
 				</button>
-				<button className="control-btn" onClick={() => plugin?.next()}><Icon name="skip-forward" /></button>
+				
+				<button className="control-btn" onClick={() => plugin?.next()}>
+					<Icon name="skip-forward" />
+				</button>
+				
 				<div className="volume-control">
 					<Icon name="volume-2" />
 					<input type="range" min="0" max="100" value={plugin?.settings.volume} onChange={(e) => plugin?.onVolumeChange(e)} />

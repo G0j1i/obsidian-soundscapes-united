@@ -18,7 +18,7 @@ export interface SoundscapesPluginSettings {
 	myMusicFolderPath: string;
 	musicCollections: MusicCollection[];
 	reindexFrequency: string;
-	playMode: "shuffle" | "repeat";
+	playMode: "repeat" | "shuffle" | "neutral";
 	currentTrackIndex: number;
 }
 
@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS: SoundscapesPluginSettings = {
 	myMusicFolderPath: "",
 	musicCollections: [],
         reindexFrequency: "1440",
-	playMode: "shuffle",
+	playMode: "neutral", 
 	currentTrackIndex: 0,
 };
 
