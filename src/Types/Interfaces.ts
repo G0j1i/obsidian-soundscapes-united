@@ -6,6 +6,7 @@ export interface CustomSoundscape {
     tracks: CustomSoundscapeTrack[];
     isNativePlaylist?: boolean;
     nativePlaylistId?: string;
+    sourceUrl?: string;
 }
 
 export interface CustomSoundscapeTrack {

@@ -4,18 +4,22 @@ interface InputModalProps {
     isOpen: boolean;
     title: string;
     fields: { key: string; label: string; placeholder: string }[];
+    initialValues?: Record<string, string>;
     onSubmit: (values: Record<string, string>) => void;
     onClose: () => void;
 }
 
-export const InputModal = ({ isOpen, title, fields, onSubmit, onClose }: InputModalProps) => {
+export const InputModal = ({ isOpen, title, fields, initialValues, onSubmit, onClose }: InputModalProps) => {
     const [values, setValues] = useState<Record<string, string>>({});
     const prevOpen = useRef(false);
 
     // Only reset the form when the modal transitions from CLOSED to OPEN
     useEffect(() => {
         if (isOpen && !prevOpen.current) {
-            const initial = fields.reduce((acc, f) => ({ ...acc, [f.key]: "" }), {});
+            const initial = fields.reduce<Record<string, string>>((acc, field) => {
+                acc[field.key] = initialValues?.[field.key] ?? "";
+                return acc;
+            }, {});
             setValues(initial);
         }
         prevOpen.current = isOpen;

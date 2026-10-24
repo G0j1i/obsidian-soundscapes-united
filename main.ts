@@ -61,7 +61,8 @@ export default class SoundscapesPlugin extends Plugin {
     pauseButton: HTMLButtonElement;
     nextButton: HTMLButtonElement;
     previousButton: HTMLButtonElement;
-    changeSoundscapeSelect: HTMLSelectElement;
+    changeSoundscapeButton: HTMLButtonElement;
+    changeSoundscapeMenu: HTMLDivElement;
     nowPlayingRoot: HTMLDivElement;
     nowPlaying: HTMLDivElement;
     volumeButton: HTMLButtonElement;
@@ -110,6 +111,8 @@ export default class SoundscapesPlugin extends Plugin {
 
     private useYtdlFallback: boolean = false;
     private playTimeout: NodeJS.Timeout | null = null;
+    private playerDomRetryTimeout: NodeJS.Timeout | null = null;
+    private playerDomRetryCount = 0;
     private currentPlayingId: string | null = null;
     private activeSoundscapeId: string | null = null;
     private activePlaybackKey: string | null = null;
@@ -141,6 +144,21 @@ export default class SoundscapesPlugin extends Plugin {
         document.getElementById("player")?.style.setProperty("display", "block", "important");
     }
 
+    private retryWhenPlayerIsDetached(retry: () => void) {
+        if (this.playerDomRetryTimeout) return;
+        if (this.playerDomRetryCount >= 10) {
+            this.playerDomRetryCount = 0;
+            new Notice("The YouTube player could not be attached. Please reopen the Soundscapes view.");
+            return;
+        }
+
+        this.playerDomRetryCount++;
+        this.playerDomRetryTimeout = setTimeout(() => {
+            this.playerDomRetryTimeout = null;
+            retry();
+        }, 500);
+    }
+
     async onload() {
         await this.loadSettings();
 
@@ -152,6 +170,12 @@ export default class SoundscapesPlugin extends Plugin {
         this.settingsObservable = new Observable(this.settings);
         this.localPlayerStateObservable = new Observable({});
         this.debouncedSaveSettings = debounce(this.saveSettings, 500, true);
+
+        // Inject FontAwesome
+        const faLink = document.createElement('link');
+        faLink.rel = 'stylesheet';
+        faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css';
+        document.head.appendChild(faLink);
 
         // NOTE: versionCheck disabled because the original repo 404s and breaks the load sequence.
         // this.versionCheck();
@@ -236,6 +260,10 @@ export default class SoundscapesPlugin extends Plugin {
     onunload() {
         if (this.reindexTimer) {
             clearTimeout(this.reindexTimer);
+        }
+        if (this.playerDomRetryTimeout) {
+            clearTimeout(this.playerDomRetryTimeout);
+            this.playerDomRetryTimeout = null;
         }
         if (this.ytPollingInterval) {
             clearInterval(this.ytPollingInterval); // Stop polling
@@ -636,23 +664,36 @@ export default class SoundscapesPlugin extends Plugin {
         this.updateRepeatToggleIcon();
         this.repeatToggleButton.onclick = () => this.toggleRepeat();
 
-        const changeSoundscapeButton = this.statusBarItem.createEl("button", {
+        this.changeSoundscapeButton = this.statusBarItem.createEl("button", {
             cls: "soundscapesroot-changesoundscapebutton",
         });
-        setIcon(changeSoundscapeButton, "list-music");
-        
-        this.changeSoundscapeSelect = changeSoundscapeButton.createEl("select", {
-            cls: "soundscapesroot-changesoundscapeselect",
+        setIcon(this.changeSoundscapeButton, "list-music");
+        this.changeSoundscapeButton.setAttribute("aria-label", "Choose soundscape");
+        this.changeSoundscapeButton.setAttribute("aria-haspopup", "menu");
+        this.changeSoundscapeButton.setAttribute("aria-expanded", "false");
+        this.changeSoundscapeButton.onclick = (event: MouseEvent) => {
+            event.stopPropagation();
+            const isOpen = this.changeSoundscapeMenu.hasClass(
+                "soundscapesroot-changesoundscapemenu--visible"
+            );
+            this.changeSoundscapeMenu.toggleClass(
+                "soundscapesroot-changesoundscapemenu--visible",
+                !isOpen
+            );
+            this.changeSoundscapeButton.setAttribute("aria-expanded", String(!isOpen));
+        };
+        this.changeSoundscapeMenu = this.statusBarItem.createDiv({
+            cls: "soundscapesroot-changesoundscapemenu",
+        });
+        this.changeSoundscapeMenu.setAttribute("role", "menu");
+        this.changeSoundscapeMenu.addEventListener("click", (event) => {
+            event.stopPropagation();
+        });
+        this.registerDomEvent(document, "click", () => this.closeSoundscapeMenu());
+        this.registerDomEvent(document, "keydown", (event: KeyboardEvent) => {
+            if (event.key === "Escape") this.closeSoundscapeMenu();
         });
         this.populateChangeSoundscapeButton();
-        this.changeSoundscapeSelect.addEventListener(
-            "change",
-            (event: Event) => {
-                this.changeSoundscape(
-                    (event?.target as HTMLSelectElement).value
-                );
-            }
-        );
 
         this.nowPlayingRoot = this.statusBarItem.createEl("div", {
             cls: "soundscapesroot-nowplaying",
@@ -717,55 +758,157 @@ export default class SoundscapesPlugin extends Plugin {
         });
     }
 
+    closeSoundscapeMenu() {
+        if (!this.changeSoundscapeMenu) return;
+        this.changeSoundscapeMenu.removeClass(
+            "soundscapesroot-changesoundscapemenu--visible"
+        );
+        this.changeSoundscapeButton?.setAttribute("aria-expanded", "false");
+    }
+
     populateChangeSoundscapeButton() {
-        if (!this.changeSoundscapeSelect) return;
+        if (!this.changeSoundscapeMenu) return;
 
-        this.changeSoundscapeSelect.replaceChildren();
+        this.changeSoundscapeMenu.replaceChildren();
+        const createSection = (
+            parent: HTMLElement,
+            title: string,
+            className: string,
+            isExpanded: boolean,
+            onSelect?: () => void
+        ) => {
+            const section = parent.createDiv({ cls: className });
+            const heading = section.createDiv({
+                cls: "soundscapesroot-menu-section-heading",
+            });
+            const toggle = heading.createEl("button", {
+                cls: "soundscapesroot-menu-toggle",
+            });
+            let expanded = isExpanded;
+            toggle.setText(`${expanded ? "▼" : "▶"} ${title}`);
+            toggle.setAttribute("aria-expanded", String(isExpanded));
+            const content = section.createDiv({
+                cls: "soundscapesroot-menu-section-items",
+            });
+            content.toggleClass("is-collapsed", !isExpanded);
+            toggle.onclick = () => {
+                expanded = !expanded;
+                content.toggleClass("is-collapsed", !expanded);
+                toggle.setAttribute("aria-expanded", String(expanded));
+                toggle.setText(`${expanded ? "▼" : "▶"} ${title}`);
+            };
 
-        const ambientGroup = this.changeSoundscapeSelect.createEl(
-            "optgroup",
-            { attr: { label: "📻 Ambient Streams" } }
+            if (onSelect) {
+                const select = heading.createEl("button", {
+                    cls: "soundscapesroot-menu-play",
+                    text: "Play",
+                });
+                select.setAttribute("aria-label", `Play ${title}`);
+                select.onclick = (event: MouseEvent) => {
+                    event.stopPropagation();
+                    onSelect();
+                    this.closeSoundscapeMenu();
+                };
+            }
+            return content;
+        };
+        const createItem = (
+            parent: HTMLElement,
+            title: string,
+            selected: boolean,
+            onSelect: () => void
+        ) => {
+            const item = parent.createEl("button", {
+                cls: "soundscapesroot-menu-item",
+                text: title,
+            });
+            item.setAttribute("role", "menuitem");
+            if (selected) item.addClass("is-active");
+            item.onclick = () => {
+                onSelect();
+                this.closeSoundscapeMenu();
+            };
+        };
+
+        const ambientItems = createSection(
+            this.changeSoundscapeMenu,
+            "Ambient Streams",
+            "soundscapesroot-menu-section",
+            true
         );
         Object.values(SOUNDSCAPES).forEach((soundscape) => {
-            ambientGroup.createEl("option", {
-                text: soundscape.name,
-                value: soundscape.id,
-            });
+            createItem(
+                ambientItems,
+                soundscape.name,
+                this.settings.soundscape === soundscape.id,
+                () => this.changeSoundscape(soundscape.id)
+            );
         });
 
-        const validCustomPlaylists = this.settings.customSoundscapes.filter(
-            (cs) => cs.tracks && cs.tracks.length > 0
+        const youtubeItems = createSection(
+            this.changeSoundscapeMenu,
+            "YouTube Playlists",
+            "soundscapesroot-menu-section",
+            true
         );
-        if (validCustomPlaylists.length > 0) {
-            const youtubeGroup = this.changeSoundscapeSelect.createEl(
-                "optgroup",
-                { attr: { label: "▶𝚈𝚘𝚞𝚝𝚞𝚋𝚎" } }
+        this.settings.customSoundscapes.forEach((playlist) => {
+            const playlistItems = createSection(
+                youtubeItems,
+                playlist.name,
+                "soundscapesroot-menu-nested-section",
+                false,
+                () => this.changeSoundscape(`${SOUNDSCAPE_TYPE.CUSTOM}_${playlist.id}`)
             );
-            validCustomPlaylists.forEach((customSoundscape) => {
-                youtubeGroup.createEl("option", {
-                    text: customSoundscape.name,
-                    value: `${SOUNDSCAPE_TYPE.CUSTOM}_${customSoundscape.id}`,
+            if (playlist.isNativePlaylist) {
+                createItem(
+                    playlistItems,
+                    "Dynamic YouTube mix",
+                    this.settings.soundscape === `${SOUNDSCAPE_TYPE.CUSTOM}_${playlist.id}`,
+                    () => this.changeSoundscape(`${SOUNDSCAPE_TYPE.CUSTOM}_${playlist.id}`)
+                );
+            } else {
+                playlist.tracks.forEach((track, index) => {
+                    createItem(
+                        playlistItems,
+                        track.name,
+                        this.settings.soundscape === `${SOUNDSCAPE_TYPE.CUSTOM}_${playlist.id}` &&
+                            this.currentTrackIndex === index,
+                        () => this.changeSoundscape(
+                            `${SOUNDSCAPE_TYPE.CUSTOM}_${playlist.id}`,
+                            index
+                        )
+                    );
                 });
-            });
-        }
+            }
+        });
 
-        if (
-            this.settings.musicCollections &&
-            this.settings.musicCollections.length > 0
-        ) {
-            const localGroup = this.changeSoundscapeSelect.createEl(
-                "optgroup",
-                { attr: { label: "📁 Local Music Libraries" } }
+        const localItems = createSection(
+            this.changeSoundscapeMenu,
+            "Local Collections",
+            "soundscapesroot-menu-section",
+            true
+        );
+        this.settings.musicCollections.forEach((collection) => {
+            const collectionItems = createSection(
+                localItems,
+                collection.name,
+                "soundscapesroot-menu-nested-section",
+                false,
+                () => this.changeSoundscape(`MUSIC_COLLECTION_${collection.id}`)
             );
-            this.settings.musicCollections.forEach((collection) => {
-                localGroup.createEl("option", {
-                    text: collection.name,
-                    value: `MUSIC_COLLECTION_${collection.id}`,
-                });
+            collection.musicIndex.forEach((track, index) => {
+                createItem(
+                    collectionItems,
+                    track.title || track.fileName,
+                    this.settings.soundscape === `MUSIC_COLLECTION_${collection.id}` &&
+                        this.currentTrackIndex === index,
+                    () => this.changeSoundscape(
+                        `MUSIC_COLLECTION_${collection.id}`,
+                        index
+                    )
+                );
             });
-        }
-
-        this.changeSoundscapeSelect.value = this.settings.soundscape;
+        });
     }
 
     /******************************************************************************************************************/
@@ -779,7 +922,16 @@ export default class SoundscapesPlugin extends Plugin {
     play() {
         if (this.isLocalPlayerActive()) {
             this.localPlayer.play();
+        } else if (this.useYtdlFallback) {
+            void this.localPlayer.play();
         } else {
+            const playerElement = document.getElementById("player");
+            if (!playerElement || !playerElement.isConnected) {
+                console.warn("IFrame not ready in DOM, delaying play...");
+                this.retryWhenPlayerIsDetached(() => this.play());
+                return;
+            }
+            this.playerDomRetryCount = 0;
             this.player?.playVideo();
         }
     }
@@ -863,6 +1015,13 @@ export default class SoundscapesPlugin extends Plugin {
 
     next() {
         this.useYtdlFallback = false;
+        if (
+            this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM &&
+            !this.getCurrentCustomSoundscape()?.isNativePlaylist
+        ) {
+            this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
+            this.showYouTubePlayer();
+        }
         if (this.playTimeout) {
             clearTimeout(this.playTimeout);
             this.playTimeout = null;
@@ -881,8 +1040,14 @@ export default class SoundscapesPlugin extends Plugin {
                 this.localPlayer.pause();
                 this.statusBarItem.removeClass("soundscapesroot--hideyoutube");
                 this.showYouTubePlayer();
+                this.updateLocalPlayerState({ isYtdlFallback: false });
                 if (this.player && typeof this.player.nextVideo === "function") {
-                    this.player.nextVideo();
+                    try {
+                        this.player.nextVideo();
+                    } catch (error) {
+                        console.error("Failed to advance the YouTube playlist", error);
+                        new Notice("Unable to advance the YouTube playlist. Please try again.");
+                    }
                 }
                 return;
             }
@@ -945,7 +1110,7 @@ export default class SoundscapesPlugin extends Plugin {
                 }
             }
         }
-        this.onSoundscapeChange();
+        void this.onSoundscapeChange(true);
     }
 
     seek(time: number) {
@@ -1016,7 +1181,7 @@ export default class SoundscapesPlugin extends Plugin {
         }
     }
 
-    changeSoundscape(soundscape: string) {
+    changeSoundscape(soundscape: string, trackIndex?: number) {
         const prevCollection = this.getActiveMusicCollection();
         if (prevCollection) {
             prevCollection.currentTrackIndex = this.currentTrackIndex;
@@ -1025,7 +1190,7 @@ export default class SoundscapesPlugin extends Plugin {
         this.settings.soundscape = soundscape;
 
         if (this.settings.soundscape.startsWith(`${SOUNDSCAPE_TYPE.CUSTOM}_`)) {
-            this.currentTrackIndex = 0;
+            this.currentTrackIndex = trackIndex ?? 0;
         }
 
         if (this.isMusicCollectionActive()) {
@@ -1035,7 +1200,9 @@ export default class SoundscapesPlugin extends Plugin {
                 this.settings.myMusicFolderPath = collection.folderPath;
                 const savedIndex = collection.currentTrackIndex ?? 0;
                 this.currentTrackIndex =
-                    savedIndex < this.settings.myMusicIndex.length
+                    trackIndex !== undefined
+                        ? trackIndex
+                        : savedIndex < this.settings.myMusicIndex.length
                         ? savedIndex
                         : 0;
             }
@@ -1109,13 +1276,13 @@ export default class SoundscapesPlugin extends Plugin {
                 });
                 break;
             case PLAYER_STATE.ENDED:
-                // Native Playlists (RD...) handle their own queue. 
-                // If the video ends, we just let the IFrame sit there.
                 if (
                     this.soundscapeType === SOUNDSCAPE_TYPE.CUSTOM &&
                     this.getCurrentCustomSoundscape()?.isNativePlaylist
                 ) {
-                    break; 
+                    if (!this.useYtdlFallback) break;
+                    this.next();
+                    break;
                 }
 
                 // "Repeat One" logic (if playMode is "repeat")
@@ -1165,6 +1332,17 @@ export default class SoundscapesPlugin extends Plugin {
 
     async onSoundscapeChange(autoplay = true) {
         if (!this.nowPlaying) return;
+        if (!this.isMusicCollectionActive() && !this.useYtdlFallback) {
+            const playerElement = document.getElementById("player");
+            if (!playerElement || !playerElement.isConnected) {
+                console.warn("IFrame not ready in DOM, delaying playback change...");
+                this.retryWhenPlayerIsDetached(() => {
+                    void this.onSoundscapeChange(autoplay);
+                });
+                return;
+            }
+            this.playerDomRetryCount = 0;
+        }
 
         if (this.settings.soundscape.startsWith(`${SOUNDSCAPE_TYPE.CUSTOM}_`)) {
             this.soundscapeType = SOUNDSCAPE_TYPE.CUSTOM;
@@ -1270,12 +1448,18 @@ export default class SoundscapesPlugin extends Plugin {
                         this.activePlaybackKey = playbackKey;
                         this.playTimeout = setTimeout(() => {
                             if (requestId !== this.playbackRequestId) return;
-                            this.player.loadPlaylist({
-                                list: playlistId,
-                                listType: "playlist",
-                                index: 0,
-                            });
-                            if (!autoplay) this.player.pauseVideo();
+                            try {
+                                this.player.loadPlaylist({
+                                    list: playlistId,
+                                    listType: "playlist",
+                                    index: 0,
+                                });
+                                if (!autoplay) this.player.pauseVideo();
+                            } catch (error) {
+                                this.activePlaybackKey = null;
+                                console.error("Failed to load the YouTube playlist", error);
+                                new Notice("Unable to load the YouTube playlist. Please try again.");
+                            }
                         }, 100);
                     }
                 }
@@ -1443,7 +1627,7 @@ export default class SoundscapesPlugin extends Plugin {
                 : { isYtdlFallback: true }),
         });
 
-        this.changeSoundscapeSelect.value = this.settings.soundscape;
+        this.populateChangeSoundscapeButton();
         this.saveSettings();
     }
 

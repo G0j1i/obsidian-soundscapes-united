@@ -11,21 +11,36 @@ const Header = () => {
 	
 	const titleElementRef = useRef<HTMLDivElement>(null);
 	const videoContainerRef = useRef<HTMLDivElement>(null);
+	const wrapperRef = useRef<HTMLDivElement>(null);
 	
 	const [videoWidth, setVideoWidth] = useState(320);
 
 	const handleResize = (e: React.MouseEvent) => {
 		e.preventDefault();
 		const startX = e.clientX;
-		const startWidth = videoWidth;
+		const startWidth = wrapperRef.current?.getBoundingClientRect().width || videoWidth;
+		
+		// 🔥 Lock the cursor and prevent text selection
+		document.body.style.cursor = "nwse-resize";
+		document.body.style.userSelect = "none";
+
 		const onMouseMove = (moveEvent: MouseEvent) => {
+			if (!wrapperRef.current) return;
 			const newWidth = Math.max(200, Math.min(800, startWidth + (moveEvent.clientX - startX)));
-			setVideoWidth(newWidth);
+			wrapperRef.current.style.width = `${newWidth}px`;
 		};
+		
 		const onMouseUp = () => {
+			// 🔥 Unlock the cursor and selection
+			document.body.style.cursor = "";
+			document.body.style.userSelect = "";
+			if (wrapperRef.current) {
+				setVideoWidth(wrapperRef.current.getBoundingClientRect().width);
+			}
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 		};
+		
 		document.addEventListener("mousemove", onMouseMove);
 		document.addEventListener("mouseup", onMouseUp);
 	};
@@ -46,14 +61,23 @@ const Header = () => {
 		const container = videoContainerRef.current;
 		if (!ytPlayerElement || !container) return;
 
-		if (isLocalActive || !hasTrack) {
-			ytPlayerElement.style.setProperty("display", "none", "important");
-			if (plugin) (plugin as any).resetPlayerToStatusBar();
-			return;
-		}
-
 		if (ytPlayerElement.parentElement !== container) {
 			container.appendChild(ytPlayerElement);
+		}
+	}, [plugin]);
+
+	useLayoutEffect(() => {
+		if (wrapperRef.current && videoWidth) {
+			wrapperRef.current.style.width = `${videoWidth}px`;
+		}
+	}, [videoWidth]);
+
+	useLayoutEffect(() => {
+		const ytPlayerElement = document.getElementById("player");
+		if (!ytPlayerElement) return;
+		if (isLocalActive || !hasTrack) {
+			ytPlayerElement.style.setProperty("display", "none", "important");
+			return;
 		}
 
 		ytPlayerElement.style.setProperty("display", "block", "important");
@@ -64,7 +88,7 @@ const Header = () => {
 		ytPlayerElement.style.setProperty("height", "100%", "important");
 		ytPlayerElement.style.setProperty("opacity", "1", "important");
 		ytPlayerElement.style.setProperty("z-index", "1", "important");
-	}, [hasTrack, isLocalActive, plugin?.settings.soundscape]);
+	}, [hasTrack, isLocalActive]);
 
 	useEffect(() => {
 		return () => {
@@ -87,8 +111,17 @@ const Header = () => {
 		<div className="soundscapesmymusic-header">
  
 			{/* 1. The Artwork / Video */}
-			{hasTrack && !isLocalActive && (
-				<div className="soundscapes-video-wrapper" style={{ width: `${videoWidth}px` }}>
+			<div
+				ref={wrapperRef}
+				className="soundscapes-video-wrapper"
+				style={{
+					// 🔥 REMOVED width from here so React doesn't fight the drag
+					maxWidth: "100%",
+					minWidth: 0,
+					maxHeight: "40vh",
+					display: hasTrack && !isLocalActive ? "block" : "none",
+				}}
+			>
 					<div 
 						ref={videoContainerRef} 
 						className="soundscapes-video-placeholder"
@@ -99,8 +132,7 @@ const Header = () => {
 						}}
 					/>
 					<div className="soundscapes-resize-handle" onMouseDown={handleResize} />
-				</div>
-			)}
+			</div>
 
 			{/* 2. The Title & Artist */}
 			{hasTrack && (
