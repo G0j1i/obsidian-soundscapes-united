@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useObsidianPluginContext } from "../../Context/ObsidianPluginContext";
 import Icon from "../Icon/Icon";
 import Header from "../Header/Header";
@@ -30,6 +30,12 @@ interface UnifiedTrack {
 
 const App = () => {
     const { settingsObservable, localPlayerStateObservable, plugin } = useObsidianPluginContext();
+    const containerRef = useRef<HTMLDivElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const audioAnalyserRef = useRef<AnalyserNode | null>(null);
+    const audioDataRef = useRef<Uint8Array | null>(null);
+    const cursorDotRef = useRef<HTMLDivElement>(null);
+    const cursorRingRef = useRef<HTMLDivElement>(null);
     const [settings, setSettings] = useState<SoundscapesPluginSettings>(settingsObservable?.getValue());
     const [localPlayerState, setLocalPlayerState] = useState<LocalPlayerState>(localPlayerStateObservable?.getValue());
     const [activeView, setActiveView] = useState<ViewContext>({ type: "home", id: null, label: "Library" });
@@ -60,6 +66,239 @@ const App = () => {
             setActiveView(ambient ? { type: "ambient", id: id, label: ambient.name } : { type: "home", id: null, label: "Library" });
         }
     }, [settings]);
+
+    useEffect(() => {
+        const container = containerRef.current;
+        const canvas = canvasRef.current;
+        if (!container || !canvas) return;
+
+        const context = canvas.getContext("2d");
+        if (!context) return;
+
+        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const pointer = { x: 0, y: 0 };
+        
+        // Create particles with orbital properties
+        const particles = Array.from({ length: 80 }, () => ({
+            angle: Math.random() * Math.PI * 2,
+            radius: 20 + Math.random() * 200, // Distance from center
+            speed: (Math.random() * 0.5 + 0.2) * 0.0005, // Rotation speed
+            size: 0.5 + Math.random() * 1.5,
+            hue: Math.random() > 0.5 ? 218 : 254, // Blue/Purple mix
+            opacity: 0.2 + Math.random() * 0.6
+        }));
+
+        let frameId = 0;
+        let width = 0;
+        let height = 0;
+        let previousTime = 0;
+
+        const resize = () => {
+            const bounds = container.getBoundingClientRect();
+            width = bounds.width;
+            height = bounds.height;
+            const scale = window.devicePixelRatio || 1;
+            canvas.width = Math.round(width * scale);
+            canvas.height = Math.round(height * scale);
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+            context.setTransform(scale, 0, 0, scale, 0, 0);
+            pointer.x = width / 2;
+            pointer.y = height / 2;
+        };
+
+        const draw = (time: number) => {
+            const delta = Math.min(time - previousTime, 32);
+            previousTime = time;
+            context.clearRect(0, 0, width, height);
+
+            // 1. Calculate the Bass Level
+            let bassLevel = 0;
+            
+            // Check if we are playing raw audio that we can analyze
+            if (audioAnalyserRef.current && audioDataRef.current && plugin?.localPlayer && !plugin.localPlayer.paused) {
+                audioAnalyserRef.current.getByteFrequencyData(audioDataRef.current);
+                // Average the first 4 bins (deep bass)
+                let sum = 0;
+                for (let i = 0; i < 4; i++) sum += audioDataRef.current[i];
+                bassLevel = (sum / 4) / 255; // Normalize to 0.0 - 1.0
+            } else {
+                // 2. The Fallback: If playing YouTube (CORS blocked), simulate a smooth heartbeat
+                // Combines a slow wave with a fast wave, and adds a touch of randomness
+                const slowBeat = Math.sin(time * 0.003); 
+                const fastBeat = Math.sin(time * 0.008);
+                // Only trigger the pulse on the positive half of the wave, and make it snappy
+                bassLevel = Math.pow(Math.max(0, (slowBeat * 0.7) + (fastBeat * 0.3)), 2) * 0.7;
+            }
+
+            const centerX = width / 2 + (pointer.x - width / 2) * 0.05;
+            const centerY = height / 2 + (pointer.y - height / 2) * 0.05;
+
+            // Draw connection lines
+            for (let i = 0; i < particles.length; i++) {
+                const p1 = particles[i];
+                // 🔥 Apply the bass pulse to the radius
+                const pulseRadius1 = p1.radius + (bassLevel * 60); 
+                const x1 = centerX + Math.cos(p1.angle) * pulseRadius1;
+                const y1 = centerY + Math.sin(p1.angle) * pulseRadius1;
+
+                for (let j = i + 1; j < particles.length; j++) {
+                    const p2 = particles[j];
+                    const pulseRadius2 = p2.radius + (bassLevel * 60);
+                    const x2 = centerX + Math.cos(p2.angle) * pulseRadius2;
+                    const y2 = centerY + Math.sin(p2.angle) * pulseRadius2;
+                    
+                    const dist = Math.hypot(x2 - x1, y2 - y1);
+                    // Increase line distance slightly on bass hits
+                    const maxDist = 60 + (bassLevel * 40); 
+                    if (dist < maxDist) {
+                        context.strokeStyle = `rgba(157, 183, 255, ${0.15 * (1 - dist / maxDist)})`;
+                        context.lineWidth = 0.5 + (bassLevel * 0.5); // Lines get thicker
+                        context.beginPath();
+                        context.moveTo(x1, y1);
+                        context.lineTo(x2, y2);
+                        context.stroke();
+                    }
+                }
+            }
+
+            // Update and draw particles
+            particles.forEach((p) => {
+                if (!reducedMotion) {
+                    p.angle += p.speed * delta;
+                }
+
+                // 🔥 Apply the pulse to the radius and size
+                const pulseRadius = p.radius + (bassLevel * 60);
+                const x = centerX + Math.cos(p.angle) * pulseRadius;
+                const y = centerY + Math.sin(p.angle) * pulseRadius;
+
+                // Particles get bigger on the bass hit
+                const visualSize = p.size + (bassLevel * 2.5); 
+
+                context.shadowBlur = 8 + (bassLevel * 20); // Glow intensifies
+                context.shadowColor = `hsla(${p.hue}, 100%, 78%, ${p.opacity + bassLevel * 0.2})`;
+                context.fillStyle = `hsla(${p.hue}, 100%, 88%, ${p.opacity + bassLevel * 0.2})`;
+                context.beginPath();
+                context.arc(x, y, visualSize, 0, Math.PI * 2);
+                context.fill();
+            });
+            context.shadowBlur = 0;
+
+            if (!reducedMotion) frameId = window.requestAnimationFrame(draw);
+        };
+
+        const onPointerMove = (event: PointerEvent) => {
+            const bounds = container.getBoundingClientRect();
+            pointer.x = event.clientX - bounds.left;
+            pointer.y = event.clientY - bounds.top;
+        };
+
+        const observer = new ResizeObserver(resize);
+        observer.observe(container);
+        container.addEventListener("pointermove", onPointerMove);
+        resize();
+        draw(0);
+
+        return () => {
+            observer.disconnect();
+            container.removeEventListener("pointermove", onPointerMove);
+            window.cancelAnimationFrame(frameId);
+        };
+    }, []);
+
+    useEffect(() => {
+        const container = containerRef.current;
+        const dot = cursorDotRef.current;
+        const ring = cursorRingRef.current;
+        if (
+            !container ||
+            !dot ||
+            !ring ||
+            !window.matchMedia("(pointer: fine)").matches ||
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ) return;
+
+        let mouseX = 0;
+        let mouseY = 0;
+        let ringX = 0;
+        let ringY = 0;
+        let frameId = 0;
+        let isVisible = false;
+        let isActive = false;
+
+        const render = () => {
+            ringX += (mouseX - ringX) * 0.15;
+            ringY += (mouseY - ringY) * 0.15;
+            dot.style.transform = `translate3d(${mouseX}px, ${mouseY}px, 0)`;
+            ring.style.transform = `translate3d(${ringX}px, ${ringY}px, 0) scale(${isActive ? 1.8 : 1})`;
+            frameId = window.requestAnimationFrame(render);
+        };
+
+        const onPointerMove = (event: PointerEvent) => {
+            if (event.pointerType && event.pointerType !== "mouse") return;
+            const bounds = container.getBoundingClientRect();
+            mouseX = event.clientX - bounds.left;
+            mouseY = event.clientY - bounds.top;
+            if (!isVisible) {
+                ringX = mouseX;
+                ringY = mouseY;
+                isVisible = true;
+                container.classList.add("is-custom-cursor-visible");
+            }
+            const interactive = (event.target as HTMLElement | null)?.closest("button, a, input, [role='button'], .nav-item, .track-row");
+            isActive = Boolean(interactive);
+            container.classList.toggle("is-custom-cursor-active", isActive);
+        };
+
+        const onPointerLeave = () => {
+            container.classList.remove("is-custom-cursor-visible", "is-custom-cursor-active");
+            isVisible = false;
+            isActive = false;
+        };
+
+        container.classList.add("has-custom-cursor");
+        container.addEventListener("pointermove", onPointerMove);
+        container.addEventListener("pointerleave", onPointerLeave);
+        frameId = window.requestAnimationFrame(render);
+
+        return () => {
+            container.classList.remove("has-custom-cursor", "is-custom-cursor-visible", "is-custom-cursor-active");
+            container.removeEventListener("pointermove", onPointerMove);
+            container.removeEventListener("pointerleave", onPointerLeave);
+            window.cancelAnimationFrame(frameId);
+        };
+    }, []);
+
+    useEffect(() => {
+        // We need to wait for the plugin and the localPlayer to exist
+        if (!plugin || !plugin.localPlayer) return;
+
+        try {
+            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+            const audioCtx = new AudioContext();
+            const analyser = audioCtx.createAnalyser();
+            
+            // fftSize 64 is perfect for isolating bass frequencies (the "thump")
+            analyser.fftSize = 64; 
+            
+            // Connect the HTML5 audio element to the analyzer
+            const source = audioCtx.createMediaElementSource(plugin.localPlayer);
+            source.connect(analyser);
+            
+            // You MUST connect to destination to hear the audio after routing it through the analyser
+            analyser.connect(audioCtx.destination);
+
+            audioAnalyserRef.current = analyser;
+            audioDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+
+            return () => {
+                audioCtx.close();
+            };
+        } catch (e) {
+            console.warn("Audio Context could not be initialized", e);
+        }
+    }, [plugin]);
 
     if (!settings) {
         return (
@@ -293,8 +532,9 @@ const App = () => {
 				</div>
 				{expanded.ambient && (
 					<div className="nav-group-items">
-						{Object.values(SOUNDSCAPES).map(s => (
+						{Object.values(SOUNDSCAPES).map((s, index) => (
 							<div key={s.id} className={`nav-item ${activeView.type === "ambient" && activeView.id === s.id ? "is-active" : ""}`}
+								style={{ "--motion-index": index } as React.CSSProperties}
 								onClick={() => (plugin as any).changeSoundscape?.(s.id)}>
 								{s.name}
 							</div>
@@ -319,8 +559,9 @@ const App = () => {
 				</div>
 				{expanded.youtube && (
 					<div className="nav-group-items">
-						{settings.customSoundscapes.map(list => (
+						{settings.customSoundscapes.map((list, index) => (
 							<div key={list.id} className={`nav-item ${activeView.type === "youtube" && activeView.id === list.id ? "is-active" : ""}`}
+								style={{ "--motion-index": index } as React.CSSProperties}
 								onClick={() => (plugin as any).changeSoundscape?.(`CUSTOM_${list.id}`)}
                                 onContextMenu={(event) => showContextMenu(event, { type: "playlist", playlistId: list.id })}>
 								<span className="nav-item-name">{list.name}</span>
@@ -369,8 +610,9 @@ const App = () => {
 					</div>
 					{expanded.collections && (
 						<div className="nav-group-items">
-							{settings.musicCollections.map(col => (
+							{settings.musicCollections.map((col, index) => (
 								<div key={col.id} className={`nav-item ${activeView.type === "local" && activeView.id === col.id ? "is-active" : ""}`}
+									style={{ "--motion-index": index } as React.CSSProperties}
 									onClick={() => (plugin as any).changeSoundscape?.(`MUSIC_COLLECTION_${col.id}`)}>
 									<span className="nav-item-name">{col.name}</span>
                                     <div className="nav-actions">
@@ -398,7 +640,10 @@ const App = () => {
 	);
 
 	return (
-		<div className="soundscapes-holistic-container">
+		<div ref={containerRef} className="soundscapes-holistic-container">
+			<canvas ref={canvasRef} className="soundscapes-ambient-canvas" aria-hidden="true" />
+			<div ref={cursorDotRef} className="soundscapes-cursor soundscapes-cursor-dot" aria-hidden="true" />
+			<div ref={cursorRingRef} className="soundscapes-cursor soundscapes-cursor-ring" aria-hidden="true" />
 			<Header />
 			<div className="soundscapes-split-workspace">
 				{renderSidebar()}
@@ -443,6 +688,7 @@ const App = () => {
 								<div
                                     key={track.id}
                                     className="track-row"
+									style={{ "--motion-index": i } as React.CSSProperties}
                                     onClick={() => handleTrackPlay(track)}
                                     onContextMenu={(event) => {
                                         if (

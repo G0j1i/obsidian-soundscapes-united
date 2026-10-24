@@ -2,13 +2,14 @@
 
 /* styles.scss */
 .soundscapes-holistic-container {
+  --font-sans: Inter, system-ui, sans-serif;
   --bg: #0b0c0f;
-  --surface-1: #121318;
-  --surface-2: #181a20;
-  --surface-3: #20232b;
-  --surface-4: #2a2e38;
+  --surface-1: hsla(225, 15%, 11%, .72);
+  --surface-2: hsla(225, 14%, 15%, .58);
+  --surface-3: hsla(225, 13%, 20%, .52);
+  --surface-4: hsla(225, 12%, 26%, .56);
   --line: rgba(255, 255, 255, .07);
-  --line-strong: rgba(255, 255, 255, .12);
+  --line-strong: rgba(255, 255, 255, .14);
   --fg: #eceef2;
   --fg-2: #9ba1ad;
   --fg-3: #6b717d;
@@ -19,13 +20,23 @@
   flex-direction: column !important;
   height: 100% !important;
   width: 100% !important;
-  background:
-    linear-gradient(
-      135deg,
-      var(--bg) 0%,
-      #15171e 100%) !important;
+  background-color: #0a0a0a !important;
+  background-image:
+    radial-gradient(ellipse 72% 70% at 18% 16%, rgba(37, 87, 157, .22), transparent 72%),
+    radial-gradient(ellipse 68% 64% at 82% 22%, rgba(91, 56, 145, .18), transparent 72%),
+    radial-gradient(ellipse 78% 72% at 54% 88%, rgba(27, 75, 130, .18), transparent 72%),
+    radial-gradient(ellipse 55% 58% at 50% 48%, rgba(64, 47, 107, .10), transparent 72%) !important;
+  background-size: 220% 220%, 190% 190%, 210% 210%, 180% 180%;
+  background-position: 0% 0%, 100% 100%, 0% 100%, 50% 0%;
+  animation: soundscapes-aurora-drift 36s ease-in-out infinite alternate;
   color: var(--fg);
+  font-family: var(--font-sans);
   overflow: hidden !important;
+  isolation: isolate;
+  position: relative;
+}
+.soundscapes-holistic-container :where(button, input, textarea, select) {
+  font-family: var(--font-sans);
 }
 body.theme-light .soundscapes-holistic-container {
   --bg: #e9ebef;
@@ -39,6 +50,73 @@ body.theme-light .soundscapes-holistic-container {
   --accent-soft: rgba(110, 150, 0, .12);
   --accent: #4a6300;
   background: var(--bg) !important;
+}
+.soundscapes-ambient-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.soundscapes-holistic-container > :not(.soundscapes-ambient-canvas):not(.soundscapes-cursor) {
+  position: relative;
+  z-index: 1;
+}
+.soundscapes-cursor {
+  position: relative;
+  top: 0;
+  left: 0;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform;
+  transition: opacity .16s ease, background-color .18s ease, border-color .18s ease;
+}
+.soundscapes-cursor-dot {
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .72);
+  box-shadow: 0 0 8px rgba(255, 255, 255, .28);
+}
+.soundscapes-cursor-ring {
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border: 1.5px solid rgba(255, 255, 255, .4);
+  border-radius: 50%;
+  transition: opacity .16s ease, background-color .18s ease, border-color .18s ease;
+}
+.soundscapes-holistic-container.is-custom-cursor-visible .soundscapes-cursor {
+  opacity: 1;
+}
+.soundscapes-holistic-container.is-custom-cursor-active .soundscapes-cursor-ring {
+  border-color: rgba(255, 255, 255, .62);
+  background: rgba(255, 255, 255, .06);
+}
+@keyframes soundscapes-aurora-drift {
+  from { background-position: 0% 0%, 100% 100%, 0% 100%, 50% 0%; }
+  to { background-position: 100% 35%, 0% 65%, 100% 0%, 0% 100%; }
+}
+.has-custom-cursor button,
+.has-custom-cursor a,
+.has-custom-cursor input,
+.has-custom-cursor .nav-group-header,
+.has-custom-cursor .nav-item,
+.has-custom-cursor .track-row {
+  cursor: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .soundscapes-holistic-container *,
+  .soundscapes-holistic-container *::before,
+  .soundscapes-holistic-container *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
 }
 .soundscapesmymusic .view-header {
   display: none !important;
@@ -56,11 +134,11 @@ body.theme-light .soundscapes-holistic-container {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: #12131866 !important;
-  backdrop-filter: blur(16px) saturate(150%);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  background: rgba(20, 20, 24, 0.4) !important;
+  backdrop-filter: blur(32px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(125%) !important;
   border-bottom: 1px solid rgba(255, 255, 255, .05);
-  box-shadow: 0 10px 30px -10px #000c, inset 0 -1px #ffffff05;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08) !important;
   position: relative !important;
   flex: 0 0 auto !important;
   max-height: 60vh !important;
@@ -165,6 +243,20 @@ body.theme-light .soundscapesmymusic-header {
   gap: 24px;
   width: 100%;
 }
+.player-island {
+  background: #2c2c2e;
+  border-radius: 999px;
+  padding: 6px 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  margin-top: 12px;
+}
+.player-island .soundscapes-player-controls {
+  width: auto;
+}
 .control-btn {
   background: transparent;
   border: none;
@@ -205,7 +297,10 @@ body.theme-light .soundscapesmymusic-header {
 }
 .soundscapes-sidebar-aside {
   width: 260px;
-  background: transparent;
+  background: rgba(20, 20, 24, 0.4) !important;
+  backdrop-filter: blur(32px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(125%) !important;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08) !important;
   border-right: 1px solid var(--line);
   padding: 16px 12px;
   overflow-y: auto;
@@ -318,6 +413,8 @@ body.theme-light .soundscapesmymusic-header {
   cursor: pointer;
   position: relative !important;
   min-width: 0 !important;
+  animation: soundscapes-fade-up .4s both;
+  animation-delay: calc(var(--motion-index, 0) * 50ms);
 }
 .nav-item:hover {
   background: var(--surface-2);
@@ -397,6 +494,8 @@ body.theme-light .soundscapesmymusic-header {
   font-weight: 800;
   margin: 0;
   color: var(--fg);
+  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
 }
 .global-search-wrapper {
   margin-left: auto;
@@ -462,10 +561,13 @@ body.theme-light .soundscapesmymusic-header {
 .track-row {
   border-radius: 8px;
   cursor: pointer;
-  transition: background .2s;
+  transition: background .2s, transform .2s ease;
+  animation: soundscapes-fade-up .42s both;
+  animation-delay: calc(var(--motion-index, 0) * 50ms);
 }
 .track-row:hover {
   background: var(--surface-3);
+  transform: translateX(2px);
 }
 .track-row .col-title {
   font-weight: 500;
@@ -502,20 +604,35 @@ body.theme-light .soundscapesmymusic-header {
   color: var(--danger);
 }
 .btn-add-track {
-  background: var(--accent-soft);
+  min-height: 36px;
+  background: color-mix(in srgb, var(--surface-2) 60%, white 8%);
   color: var(--accent);
-  border: 1px solid var(--accent);
-  padding: 6px 12px;
-  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  padding: 6px 16px;
+  border-radius: 999px;
   font-size: .8rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all .2s;
+  transition: border-color .2s, background .2s, transform .2s;
   margin-right: 16px;
 }
 .btn-add-track:hover {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--surface-2) 50%, white 14%);
+  border-color: var(--accent);
+  color: var(--fg);
+  transform: translateY(-1px);
+}
+@keyframes soundscapes-fade-up {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
 }
 .soundscapes-modal-overlay {
   position: fixed;
@@ -786,4 +903,58 @@ body.theme-light .soundscapesmymusic-header {
 .soundscapes-empty-state-link:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 3px;
+}
+
+
+/* Hide the native cursor when the custom cursor is active */
+.soundscapes-holistic-container.has-custom-cursor,
+.soundscapes-holistic-container.has-custom-cursor * {
+    cursor: none !important;
+}
+
+/* EXCEPTION: Bring back the text cursor (I-beam) for inputs */
+.soundscapes-holistic-container.has-custom-cursor input[type="text"],
+.soundscapes-holistic-container.has-custom-cursor textarea {
+    cursor: text !important;
+}
+
+/* Ensure the custom cursor elements don't get blocked */
+.soundscapes-cursor {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none; /* Prevents the cursor from blocking clicks */
+    z-index: 99999;
+    will-change: transform;
+}
+
+.soundscapes-cursor-dot {
+    width: 4px;
+    height: 4px;
+    background-color: var(--accent, #c3ec52);
+    border-radius: 50%;
+    /* Offset by half its width/height so the dot is perfectly centered */
+    margin-top: -2px;
+    margin-left: -2px;
+}
+
+.soundscapes-cursor-ring {
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(195, 236, 82, 0.6);
+    border-radius: 50%;
+    transition: width 0.2s, height 0.2s, border-color 0.2s, margin 0.2s;
+    /* Offset by half its width/height to center it */
+    margin-top: -12px;
+    margin-left: -12px;
+}
+
+/* Enlarge the ring when hovering over interactive elements */
+.soundscapes-holistic-container.is-custom-cursor-active .soundscapes-cursor-ring {
+    width: 40px;
+    height: 40px;
+    margin-top: -20px;
+    margin-left: -20px;
+    border-color: var(--accent, #c3ec52);
+    background-color: rgba(195, 236, 82, 0.1);
 }

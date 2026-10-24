@@ -173,7 +173,8 @@ const Header = () => {
 			)}
 
 			{/* 4. The Controls */}
-			<div className="soundscapes-player-controls">
+			<div className="player-island">
+				<div className="soundscapes-player-controls">
 				{/* 🔥 Shuffle Button (Highlights when Shuffle is ON) */}
 				<button 
 					className={`control-btn ${plugin?.settings.playMode === "shuffle" ? "active" : ""}`} 
@@ -225,6 +226,7 @@ const Header = () => {
 				<div className="volume-control">
 					<Icon name="volume-2" />
 					<input type="range" min="0" max="100" value={plugin?.settings.volume} onChange={(e) => plugin?.onVolumeChange(e)} />
+				</div>
 				</div>
 			</div>
 		</div>
