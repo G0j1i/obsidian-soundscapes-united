@@ -12,37 +12,70 @@ const Header = () => {
 	const titleElementRef = useRef<HTMLDivElement>(null);
 	const videoContainerRef = useRef<HTMLDivElement>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
+	const headerRef = useRef<HTMLDivElement>(null);
+	const videoResizeRef = useRef<{ pointerId: number; startX: number; startY: number; startWidth: number } | null>(null);
+	const panelResizeRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null);
 	
 	const [videoWidth, setVideoWidth] = useState(320);
+	const [panelHeight, setPanelHeight] = useState<number | null>(null);
 
-	const handleResize = (e: React.MouseEvent) => {
-		e.preventDefault();
-		const startX = e.clientX;
-		const startWidth = wrapperRef.current?.getBoundingClientRect().width || videoWidth;
-		
-		// 🔥 Lock the cursor and prevent text selection
-		document.body.style.cursor = "nwse-resize";
-		document.body.style.userSelect = "none";
+	const startVideoResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		event.preventDefault();
+		event.stopPropagation();
+		event.currentTarget.setPointerCapture(event.pointerId);
+		videoResizeRef.current = {
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			startY: event.clientY,
+			startWidth: wrapperRef.current?.getBoundingClientRect().width || videoWidth,
+		};
+		headerRef.current?.classList.add("is-video-resizing");
+	};
 
-		const onMouseMove = (moveEvent: MouseEvent) => {
-			if (!wrapperRef.current) return;
-			const newWidth = Math.max(200, Math.min(800, startWidth + (moveEvent.clientX - startX)));
-			wrapperRef.current.style.width = `${newWidth}px`;
+	const moveVideoResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		const resize = videoResizeRef.current;
+		if (!resize || resize.pointerId !== event.pointerId) return;
+		const deltaX = event.clientX - resize.startX;
+		const deltaY = event.clientY - resize.startY;
+		const maxPanelVideoWidth = Math.max(200, Math.min(800, (window.innerHeight * 0.75 - 250) * 16 / 9));
+		const nextWidth = Math.max(200, Math.min(maxPanelVideoWidth, resize.startWidth + (deltaX + deltaY) / 2));
+		setVideoWidth(nextWidth);
+		setPanelHeight((currentHeight) => {
+			const currentSize = currentHeight ?? headerRef.current?.getBoundingClientRect().height ?? 260;
+			const requiredHeight = nextWidth * 9 / 16 + 250;
+			return Math.min(window.innerHeight * 0.75, Math.max(currentSize, requiredHeight));
+		});
+	};
+
+	const finishVideoResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		if (videoResizeRef.current?.pointerId !== event.pointerId) return;
+		videoResizeRef.current = null;
+		headerRef.current?.classList.remove("is-video-resizing");
+	};
+
+	const startPanelResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		event.preventDefault();
+		event.currentTarget.setPointerCapture(event.pointerId);
+		panelResizeRef.current = {
+			pointerId: event.pointerId,
+			startY: event.clientY,
+			startHeight: headerRef.current?.getBoundingClientRect().height || 260,
 		};
-		
-		const onMouseUp = () => {
-			// 🔥 Unlock the cursor and selection
-			document.body.style.cursor = "";
-			document.body.style.userSelect = "";
-			if (wrapperRef.current) {
-				setVideoWidth(wrapperRef.current.getBoundingClientRect().width);
-			}
-			document.removeEventListener("mousemove", onMouseMove);
-			document.removeEventListener("mouseup", onMouseUp);
-		};
-		
-		document.addEventListener("mousemove", onMouseMove);
-		document.addEventListener("mouseup", onMouseUp);
+		headerRef.current?.classList.add("is-panel-resizing");
+	};
+
+	const movePanelResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		const resize = panelResizeRef.current;
+		if (!resize || resize.pointerId !== event.pointerId) return;
+		const height = Math.max(190, Math.min(window.innerHeight * 0.75, resize.startHeight + event.clientY - resize.startY));
+		setPanelHeight(height);
+
+	};
+
+	const finishPanelResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		if (panelResizeRef.current?.pointerId !== event.pointerId) return;
+		panelResizeRef.current = null;
+		headerRef.current?.classList.remove("is-panel-resizing");
 	};
 
 	const shouldScrollTitle = titleElementRef?.current
@@ -50,6 +83,9 @@ const Header = () => {
 
 	const isLocalActive = plugin?.settings.soundscape?.startsWith("MUSIC_COLLECTION_");
 	const hasTrack = !!localPlayerState.currentTrack;
+	const displayedVideoWidth = panelHeight === null
+		? videoWidth
+		: Math.max(200, Math.min(videoWidth, (panelHeight - 250) * 16 / 9));
 
 	useEffect(() => {
 		const unsubscribe = localPlayerStateObservable?.onChange((newState: LocalPlayerState) => setLocalPlayerState(newState));
@@ -65,12 +101,6 @@ const Header = () => {
 			container.appendChild(ytPlayerElement);
 		}
 	}, [plugin]);
-
-	useLayoutEffect(() => {
-		if (wrapperRef.current && videoWidth) {
-			wrapperRef.current.style.width = `${videoWidth}px`;
-		}
-	}, [videoWidth]);
 
 	useLayoutEffect(() => {
 		const ytPlayerElement = document.getElementById("player");
@@ -108,18 +138,17 @@ const Header = () => {
 	}, [hasTrack, isLocalActive, localPlayerState.isYtdlFallback]);
 
 	return (
-		<div className="soundscapesmymusic-header">
+		<div ref={headerRef} className="soundscapesmymusic-header" style={panelHeight ? { height: `${panelHeight}px` } : undefined}>
  
 			{/* 1. The Artwork / Video */}
 			<div
 				ref={wrapperRef}
 				className="soundscapes-video-wrapper"
 				style={{
-					// 🔥 REMOVED width from here so React doesn't fight the drag
+					width: `${displayedVideoWidth}px`,
 					maxWidth: "100%",
 					minWidth: 0,
-					maxHeight: "40vh",
-					display: hasTrack && !isLocalActive ? "block" : "none",
+					display: hasTrack && !isLocalActive && (panelHeight === null || panelHeight >= 380) ? "block" : "none",
 				}}
 			>
 					<div 
@@ -131,7 +160,17 @@ const Header = () => {
 							backgroundPosition: 'center' 
 						}}
 					/>
-					<div className="soundscapes-resize-handle" onMouseDown={handleResize} />
+					<div
+						className="soundscapes-resize-handle"
+						role="separator"
+						aria-orientation="vertical"
+						title="Drag to resize video"
+						onPointerDown={startVideoResize}
+						onPointerMove={moveVideoResize}
+						onPointerUp={finishVideoResize}
+						onPointerCancel={finishVideoResize}
+						onLostPointerCapture={finishVideoResize}
+					/>
 			</div>
 
 			{/* 2. The Title & Artist */}
@@ -229,6 +268,17 @@ const Header = () => {
 				</div>
 				</div>
 			</div>
+			<div
+				className="soundscapes-header-resize-handle"
+				role="separator"
+				aria-orientation="horizontal"
+				title="Drag to resize player panel"
+				onPointerDown={startPanelResize}
+				onPointerMove={movePanelResize}
+				onPointerUp={finishPanelResize}
+				onPointerCancel={finishPanelResize}
+				onLostPointerCapture={finishPanelResize}
+			/>
 		</div>
 	);
 };

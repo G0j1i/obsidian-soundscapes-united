@@ -22,6 +22,7 @@ type ContextMenuTarget =
     | { type: "playlist"; playlistId: string }
     | ({ type: "track" } & EditableTrackTarget);
 type ContextMenuState = { x: number; y: number; target: ContextMenuTarget } | null;
+type SidebarResize = { pointerId: number; startX: number; startWidth: number };
 
 interface UnifiedTrack {
 	id: string; title: string; artist: string; album: string; duration: number;
@@ -39,6 +40,9 @@ const App = () => {
     const [settings, setSettings] = useState<SoundscapesPluginSettings>(settingsObservable?.getValue());
     const [localPlayerState, setLocalPlayerState] = useState<LocalPlayerState>(localPlayerStateObservable?.getValue());
     const [activeView, setActiveView] = useState<ViewContext>({ type: "home", id: null, label: "Library" });
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [sidebarWidth, setSidebarWidth] = useState(260);
+    const sidebarResizeRef = useRef<SidebarResize | null>(null);
     const [expanded, setExpanded] = useState({ ambient: false, youtube: false, collections: false });
     const [modalType, setModalType] = useState<"playlist" | "track" | "import" | "renamePlaylist" | "renameTrack" | "renameCollection" | null>(null);
     const [modalPlaylistId, setModalPlaylistId] = useState<string | null>(null);
@@ -133,6 +137,37 @@ const App = () => {
 
             const centerX = width / 2 + (pointer.x - width / 2) * 0.05;
             const centerY = height / 2 + (pointer.y - height / 2) * 0.05;
+
+            // Draw a faint perspective floor, masked so it fades into the aurora.
+            context.save();
+            context.strokeStyle = "rgba(165, 185, 225, 0.045)";
+            context.lineWidth = 0.65;
+            const horizonY = centerY + height * 0.02;
+            const verticalCount = 22;
+            for (let index = 0; index <= verticalCount; index += 1) {
+                const bottomX = (index / verticalCount) * width;
+                context.beginPath();
+                context.moveTo(centerX, horizonY);
+                context.lineTo(bottomX, height);
+                context.stroke();
+            }
+            for (let index = 1; index <= 18; index += 1) {
+                const depth = index / 18;
+                const y = horizonY + (height - horizonY) * depth * depth;
+                const halfWidth = width * depth * 0.62;
+                context.beginPath();
+                context.moveTo(centerX - halfWidth, y);
+                context.lineTo(centerX + halfWidth, y);
+                context.stroke();
+            }
+            context.globalCompositeOperation = "destination-in";
+            const gridMask = context.createRadialGradient(centerX, height * 0.58, 0, centerX, height * 0.58, Math.max(width, height) * 0.72);
+            gridMask.addColorStop(0, "rgba(255, 255, 255, 0.9)");
+            gridMask.addColorStop(0.58, "rgba(255, 255, 255, 0.48)");
+            gridMask.addColorStop(1, "rgba(255, 255, 255, 0)");
+            context.fillStyle = gridMask;
+            context.fillRect(0, 0, width, height);
+            context.restore();
 
             // Draw connection lines
             for (let i = 0; i < particles.length; i++) {
@@ -347,7 +382,7 @@ const App = () => {
 		if (!plugin) return;
 
 		if (track.source === "local") {
-			plugin.changeMyMusicTrack(track.nativeTrackRef.fileName);
+			plugin.changeMyMusicTrack(track.nativeTrackRef.fullPath);
 		} else if (track.source === "youtube") {
             const target = settings.customSoundscapes?.find(p => p.id === activeView.id);
             
@@ -520,15 +555,65 @@ const App = () => {
         ];
     };
 
+	const beginSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		event.preventDefault();
+		event.currentTarget.setPointerCapture(event.pointerId);
+		event.currentTarget.parentElement?.classList.add("is-resizing");
+		sidebarResizeRef.current = {
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			startWidth: sidebarCollapsed ? 56 : sidebarWidth,
+		};
+	};
+
+	const moveSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		const resize = sidebarResizeRef.current;
+		if (!resize || resize.pointerId !== event.pointerId) return;
+		const width = resize.startWidth + event.clientX - resize.startX;
+		if (width < 190) {
+			setSidebarCollapsed(true);
+		} else {
+			setSidebarWidth(Math.min(360, width));
+			setSidebarCollapsed(false);
+		}
+	};
+
+	const endSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
+		if (sidebarResizeRef.current?.pointerId !== event.pointerId) return;
+		sidebarResizeRef.current = null;
+		event.currentTarget.parentElement?.classList.remove("is-resizing");
+	};
+
 	const renderSidebar = () => (
-		<aside className="soundscapes-sidebar-aside">
-			<div className="nav-header-title">Library Sources</div>
+		<aside
+			className={`soundscapes-sidebar-aside ${sidebarCollapsed ? "is-collapsed" : ""}`}
+			style={{ "--sidebar-width": `${sidebarCollapsed ? 56 : sidebarWidth}px` } as React.CSSProperties}
+		>
+			<div className="sidebar-heading">
+				<div className="nav-header-title">Library Sources</div>
+				<button
+					type="button"
+					className="sidebar-collapse-btn"
+					aria-label={sidebarCollapsed ? "Expand Library Sources" : "Collapse Library Sources"}
+					title={sidebarCollapsed ? "Expand Library Sources" : "Collapse Library Sources"}
+					onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+				>
+					<Icon name={sidebarCollapsed ? "chevron-right" : "chevron-left"} />
+				</button>
+			</div>
 			
 			{/* Ambient Group */}
 			<div className="nav-group">
-				<div className="nav-group-header" onClick={() => setExpanded(p => ({ ...p, ambient: !p.ambient }))}>
+				<div className="nav-group-header" onClick={() => {
+					if (sidebarCollapsed) {
+						setSidebarCollapsed(false);
+						setExpanded((p) => ({ ...p, ambient: true }));
+					} else {
+						setExpanded((p) => ({ ...p, ambient: !p.ambient }));
+					}
+				}}>
 					<span className="chevron">{expanded.ambient ? "▼" : "▶"}</span>
-					<Icon name="radio-tower" /> <span>Ambient Streams</span>
+					<Icon name="radio-tower" /> <span className="nav-group-label">Ambient Streams</span>
 				</div>
 				{expanded.ambient && (
 					<div className="nav-group-items">
@@ -545,9 +630,16 @@ const App = () => {
 
 			{/* YouTube Group */}
 			<div className="nav-group">
-				<div className="nav-group-header" onClick={() => setExpanded(p => ({ ...p, youtube: !p.youtube }))}>
+				<div className="nav-group-header" onClick={() => {
+					if (sidebarCollapsed) {
+						setSidebarCollapsed(false);
+						setExpanded((p) => ({ ...p, youtube: true }));
+					} else {
+						setExpanded((p) => ({ ...p, youtube: !p.youtube }));
+					}
+				}}>
 					<span className="chevron">{expanded.youtube ? "▼" : "▶"}</span>
-					<i className="fa-brands fa-youtube" style={{ color: "#ff0000", fontSize: "14px" }}></i> <span>YouTube Playlists</span>
+					<i className="fa-brands fa-youtube" style={{ color: "#ff0000", fontSize: "14px" }}></i> <span className="nav-group-label">YouTube Playlists</span>
                     <div className="nav-actions">
                         <button className="nav-add-btn" onClick={(e) => { e.stopPropagation(); setModalType("import"); }} title="Import Playlist">
                             <Icon name="download" />
@@ -592,9 +684,16 @@ const App = () => {
 			{/* Collections Group */}
 			{settings.musicCollections?.length > 0 && (
 				<div className="nav-group">
-					<div className="nav-group-header" onClick={() => setExpanded(p => ({ ...p, collections: !p.collections }))}>
+					<div className="nav-group-header" onClick={() => {
+						if (sidebarCollapsed) {
+							setSidebarCollapsed(false);
+							setExpanded((p) => ({ ...p, collections: true }));
+						} else {
+							setExpanded((p) => ({ ...p, collections: !p.collections }));
+						}
+					}}>
 						<span className="chevron">{expanded.collections ? "▼" : "▶"}</span>
-						<Icon name="folder" /> <span>Collections</span>
+						<Icon name="folder" /> <span className="nav-group-label">Collections</span>
                         <div className="nav-actions">
                             <button className="nav-add-btn" onClick={async (e) => {
                                 e.stopPropagation();
@@ -636,6 +735,17 @@ const App = () => {
 					)}
 				</div>
 			)}
+			<div
+				className="soundscapes-sidebar-resize-handle"
+				role="separator"
+				aria-orientation="vertical"
+				title="Drag to resize; drag left to collapse"
+				onPointerDown={beginSidebarResize}
+				onPointerMove={moveSidebarResize}
+				onPointerUp={endSidebarResize}
+				onPointerCancel={endSidebarResize}
+				onLostPointerCapture={endSidebarResize}
+			/>
 		</aside>
 	);
 

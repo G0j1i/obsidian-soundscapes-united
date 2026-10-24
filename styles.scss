@@ -141,10 +141,47 @@ body.theme-light .soundscapes-holistic-container {
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08) !important;
   position: relative !important;
   flex: 0 0 auto !important;
-  max-height: 60vh !important;
+  max-height: 75vh !important;
+  min-height: 190px;
+  box-sizing: border-box;
   overflow: hidden !important;
   z-index: 100;
   gap: 12px;
+}
+.soundscapes-header-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1200;
+  height: 10px;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+.soundscapes-header-resize-handle::after {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 34px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .18);
+  content: "";
+  transform: translateX(-50%);
+  transition: background-color .15s ease, width .15s ease;
+}
+.soundscapes-header-resize-handle:hover::after,
+.is-panel-resizing .soundscapes-header-resize-handle::after {
+  width: 48px;
+  background: rgba(255, 255, 255, .4);
+}
+.is-panel-resizing,
+.is-video-resizing {
+  user-select: none;
+}
+.is-panel-resizing .soundscapes-header-resize-handle {
+  cursor: row-resize;
 }
 body.theme-light .soundscapesmymusic-header {
   background: #fff9 !important;
@@ -155,8 +192,7 @@ body.theme-light .soundscapesmymusic-header {
   position: relative !important;
   flex-shrink: 0;
   aspect-ratio: 16/9;
-  max-width: 90%;
-  max-height: 100% !important;
+  max-width: 100%;
   overflow: hidden !important;
   border-radius: 8px;
   box-shadow: 0 8px 24px #00000080;
@@ -180,23 +216,27 @@ body.theme-light .soundscapesmymusic-header {
 }
 .soundscapes-resize-handle {
   position: absolute;
-  bottom: 0;
   right: 0;
+  bottom: 0;
   width: 24px;
   height: 24px;
   cursor: nwse-resize;
   z-index: 99999;
-  background:
-    linear-gradient(
-      135deg,
-      transparent 50%,
-      var(--accent) 50%);
-  border-radius: 0 0 8px;
-  opacity: .6;
-  transition: opacity .2s;
+  touch-action: none;
+  user-select: none;
+  border-radius: 0 0 8px 0;
+  background: linear-gradient(135deg, transparent 48%, rgba(195, 236, 82, .22) 49%, var(--accent) 100%);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 42%, transparent));
+  opacity: .58;
+  transform-origin: bottom right;
+  transition: opacity .16s ease, filter .16s ease, transform .16s ease;
 }
-.soundscapes-resize-handle:hover {
-  opacity: 1;
+.soundscapes-resize-handle:hover,
+.is-video-resizing .soundscapes-resize-handle {
+  opacity: .95;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 58%, transparent));
+  transform: translate(1px, 1px);
 }
 .soundscapes-player-info {
   display: flex;
@@ -296,7 +336,11 @@ body.theme-light .soundscapesmymusic-header {
   overflow: hidden !important;
 }
 .soundscapes-sidebar-aside {
-  width: 260px;
+  position: relative;
+  box-sizing: border-box;
+  width: var(--sidebar-width, 260px);
+  min-width: var(--sidebar-width, 260px);
+  flex: 0 0 var(--sidebar-width, 260px);
   background: rgba(20, 20, 24, 0.4) !important;
   backdrop-filter: blur(32px) saturate(125%) !important;
   -webkit-backdrop-filter: blur(32px) saturate(125%) !important;
@@ -307,6 +351,82 @@ body.theme-light .soundscapesmymusic-header {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  transition: width .18s ease, min-width .18s ease, flex-basis .18s ease;
+}
+.soundscapes-sidebar-aside.is-resizing {
+  transition: none;
+}
+.sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  gap: 6px;
+}
+.sidebar-heading .nav-header-title {
+  margin: 0;
+}
+.sidebar-collapse-btn {
+  display: inline-flex;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--fg-3);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: color .16s ease, background-color .16s ease;
+}
+.sidebar-collapse-btn:hover {
+  color: var(--fg);
+  background: var(--surface-3);
+}
+.soundscapes-sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 30;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.soundscapes-sidebar-resize-handle::after {
+  position: absolute;
+  top: 0;
+  right: 3px;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  content: "";
+  transition: background-color .15s ease;
+}
+.soundscapes-sidebar-resize-handle:hover::after,
+.soundscapes-sidebar-aside.is-resizing .soundscapes-sidebar-resize-handle::after {
+  background: rgba(255, 255, 255, .35);
+}
+.soundscapes-sidebar-aside.is-collapsed {
+  padding-right: 8px;
+  padding-left: 8px;
+}
+.soundscapes-sidebar-aside.is-collapsed .sidebar-heading {
+  justify-content: center;
+}
+.soundscapes-sidebar-aside.is-collapsed .nav-header-title,
+.soundscapes-sidebar-aside.is-collapsed .nav-group-header .chevron,
+.soundscapes-sidebar-aside.is-collapsed .nav-group-header .nav-group-label,
+.soundscapes-sidebar-aside.is-collapsed .nav-actions,
+.soundscapes-sidebar-aside.is-collapsed .nav-group-items {
+  display: none !important;
+}
+.soundscapes-sidebar-aside.is-collapsed .nav-group-header {
+  justify-content: center !important;
+  padding: 8px !important;
 }
 .nav-header-title {
   font-size: .75rem;
@@ -338,8 +458,9 @@ body.theme-light .soundscapesmymusic-header {
   background: var(--surface-2);
   color: var(--fg);
 }
-.nav-group-header > span:not(.chevron) {
+.nav-group-header > .nav-group-label {
   flex: 1 1 auto !important;
+  min-width: 0;
   text-align: left !important;
   white-space: nowrap !important;
   overflow: hidden !important;

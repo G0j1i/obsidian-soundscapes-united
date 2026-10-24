@@ -1124,8 +1124,15 @@ export default class SoundscapesPlugin extends Plugin {
     }
 
     changeMyMusicTrack(fileName: string) {
+        const trackIndex = this.settings.myMusicIndex.findIndex(
+            (track) => track.fullPath === fileName || track.fileName === fileName
+        );
+        if (trackIndex < 0) return;
+
+        this.currentTrackIndex = trackIndex;
         this.useYtdlFallback = false;
-        this.onSoundscapeChange();
+        void this.saveSettings();
+        void this.onSoundscapeChange(true);
     }
 
     toggleShuffle() {
