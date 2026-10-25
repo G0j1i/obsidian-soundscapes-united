@@ -24,7 +24,7 @@ Additionally, when listening to a custom soundscape, you can use the new "next" 
 
 ![Screenshot of custom soundscapes list](screenshot3.png)
 ![Screenshot of editing a custom soundscape](screenshot4.png)
-![Screenshot of soundscapes player while playing a custom soundscape](screenshot5.png)
+![Screenshot of soundscapes player while playing a custom soundscape](image2.png)
 
 ### My Music - Local Music Library
 
@@ -35,8 +35,6 @@ My Music supports playing with the mini-player in the status bar as well as a ne
 Within the My Music view, you can play, pause, next, previous, seek, shuffle, and search.
 
 ![Settings view with My Music selected](screenshot6.png)
-
-![My Music view within Obsidian](screenshot7.png)
 
 ## Requesting New Soundscapes
 
@@ -76,20 +74,56 @@ If you run into any issues with this plugin, please [open an issue](https://gith
 
 <a href="https://www.buymeacoffee.com/andrewmcgivery" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-# ⚠️ Beta Notice (v1.0.0-beta.1)
+## ⚠️ Beta Notice (v1.1.0-beta.1)
 
-This plugin is in **beta**. Core features are stable, but the YouTube player is still being refined.
+This plugin is in **beta**. The core playback engine and UI are highly stable, but we are still refining specific edge cases.
 
 ### What works reliably
-- Local music library
-- Ambient streams
-- YouTube playlists (static import and native mixes via IFrame)
-- In-app playlist management
-- Search (global and in-playlist)
+- **Local Music Library:** Fast indexing, smooth playback, and shuffle/repeat support.
+- **Ambient Streams (mostly):** Live YouTube radio stations; some may be unnavailable.
+- **YouTube Playlists:** Static imports and Native Mixes (`RD...`) playback via IFrame.
+- **In-App Management:** Right-click context menus to rename, delete, or edit playlists and tracks (including URL re-fetching).
+- **Overhaul Visuals:** Glassmorphism UI, animated aurora backdrop, orbital particles, and a customizable resizable layout (header and sidebar).
+- **Search:** Global search and in-playlist filtering.
 
 ### What's experimental
-- **`yt-dlp` fallback** for embedding-blocked videos (some major-label tracks). 
+- **`yt-dlp` fallback:** For embedding-blocked videos (like some major-label tracks).
   - Requires [yt-dlp](https://github.com/yt-dlp/yt-dlp) to be installed and on your system PATH.
-  - Works, but transitions between the IFrame player and the `yt-dlp` audio player can occasionally glitch.
+  - **Note:** While `yt-dlp` works mostly flawlessly for Native Mixes (`RD...`), *some static playlists with blocked videos may still require a manual fallback click* (using the headphones icon) to trigger audio playback. 
 
-If `yt-dlp` is not installed, blocked videos will simply be skipped with a notice. Everything else works normally.
+If `yt-dlp` is not installed, blocked videos will be skipped with a notice. Everything else works normally.
+
+---
+
+## ✨ Visual Overhaul (v1.1.0)
+
+This fork introduces a complete UI redesign inspired by modern desktop music players. 
+
+**Before:**
+
+![My Music view within Obsidian](screenshot7.png)
+![Screenshot of Obsidian Soundscapes player](screenshot1.png)
+
+**After:**
+
+![Soundscape React view within Obsidian](image.png)
+![Soundscape status bar mini-player within Obsidian](image1.png)
+
+
+- **Animated Aurora & Particle Grid:** A dynamic, reactive canvas background that breathes with your music.
+- **Custom Inertial Cursor:** A smooth dot-and-ring cursor scoped only to the Soundscapes view.
+- **Resizable Workspace:** Drag the bottom of the player header or the right edge of the sidebar to fit your screen. Collapse the sidebar to an icon-only view for maximum focus.
+- **In-App Playlist Editor:** Right-click any playlist or track to manage your library without opening the plugin settings.
+
+---
+
+### 🕉️ Accessibility
+The animated aurora, particle grid, and custom cursor automatically disable if your system has **"Reduce Motion"** enabled in your OS settings. 
+
+***
+
+### Next Steps for you:
+1. Paste this into your README.
+2. Add your screenshots in the "Visual Overhaul" section.
+3. Run `npm run build`.
+4. Commit and push (`git add .`, `git commit -m "docs: update README for v1.1.0-beta.1"`, `git push`).
